@@ -1,24 +1,52 @@
-import './style.css';
-import typescriptLogo from '@/assets/typescript.svg';
-import wxtLogo from '/wxt.svg';
-import { setupCounter } from '@/components/counter';
+import type { GetStateMessage, SetStateMessage, StateResponse } from "../../utils/types";
 
-document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
-  <div>
-    <a href="https://wxt.dev" target="_blank">
-      <img src="${wxtLogo}" class="logo" alt="WXT logo" />
-    </a>
-    <a href="https://www.typescriptlang.org/" target="_blank">
-      <img src="${typescriptLogo}" class="logo vanilla" alt="TypeScript logo" />
-    </a>
-    <h1>WXT + TypeScript</h1>
-    <div class="card">
-      <button id="counter" type="button"></button>
-    </div>
-    <p class="read-the-docs">
-      Click on the WXT and TypeScript logos to learn more
-    </p>
-  </div>
-`;
+const toggle = document.getElementById("active-toggle") as HTMLInputElement;
+const statusText = document.getElementById("status-text") as HTMLSpanElement;
+const connectionStatus = document.getElementById("connection-status") as HTMLParagraphElement;
 
-setupCounter(document.querySelector<HTMLButtonElement>('#counter')!);
+function updateUI(state: StateResponse): void {
+  toggle.checked = state.isActive;
+  statusText.textContent = state.isActive ? "Active" : "Inactive";
+
+  if (state.isActive) {
+    connectionStatus.textContent = state.isConnected ? "Connected to relay" : "Connecting...";
+    connectionStatus.className = state.isConnected
+      ? "connection-status connected"
+      : "connection-status connecting";
+  } else {
+    connectionStatus.textContent = "";
+    connectionStatus.className = "connection-status";
+  }
+}
+
+function refreshState(): void {
+  chrome.runtime.sendMessage<GetStateMessage, StateResponse>({ type: "getState" }, (response) => {
+    if (response) {
+      updateUI(response);
+    }
+  });
+}
+
+// Load initial state
+refreshState();
+
+// Poll for state updates while popup is open
+const pollInterval = setInterval(refreshState, 1000);
+
+// Clean up on popup close
+window.addEventListener("unload", () => {
+  clearInterval(pollInterval);
+});
+
+// Handle toggle changes
+toggle.addEventListener("change", () => {
+  const isActive = toggle.checked;
+  chrome.runtime.sendMessage<SetStateMessage, StateResponse>(
+    { type: "setState", isActive },
+    (response) => {
+      if (response) {
+        updateUI(response);
+      }
+    }
+  );
+});

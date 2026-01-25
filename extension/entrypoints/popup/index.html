@@ -3,11 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Default Popup Title</title>
-    <meta name="manifest.type" content="browser_action" />
+    <title>Dev Browser</title>
+    <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <div id="app"></div>
+    <div class="popup">
+      <h1>Dev Browser</h1>
+      <div class="toggle-row">
+        <label class="toggle">
+          <input type="checkbox" id="active-toggle" />
+          <span class="slider"></span>
+        </label>
+        <span id="status-text">Inactive</span>
+      </div>
+      <p id="connection-status" class="connection-status"></p>
+    </div>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>
