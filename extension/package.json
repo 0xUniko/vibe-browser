@@ -15,5 +15,8 @@
     "@types/chrome": "^0.1.36",
     "typescript": "^5.9.3",
     "wxt": "^0.20.6"
+  },
+  "dependencies": {
+    "effect": "^3.19.15"
   }
 }

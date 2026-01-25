@@ -1,214 +1,224 @@
 /**
- * ConnectionManager - Manages WebSocket connection to relay server.
+ * Connection (Effect service) - Manages WebSocket connection to relay server.
  */
 
-import type { Logger } from "../utils/logger";
-import type { ExtensionCommandMessage, ExtensionResponseMessage } from "../utils/types";
+import {
+  Context,
+  Duration,
+  Effect,
+  Fiber,
+  Layer,
+  Queue,
+  Ref,
+  Stream,
+} from "effect";
+import type { ExtensionCommandMessage } from "../utils/types";
+import { Logger } from "./Logger";
 
 const RELAY_URL = "ws://localhost:9222/extension";
-const RECONNECT_INTERVAL = 3000;
+const RELAY_HTTP = "http://localhost:9222";
+const RECONNECT_INTERVAL_MS = 3000;
 
-export interface ConnectionManagerDeps {
-  logger: Logger;
-  onMessage: (message: ExtensionCommandMessage) => Promise<unknown>;
-  onDisconnect: () => void;
+export type ConnectionEvent =
+  | { _tag: "Connected" }
+  | { _tag: "Disconnected"; reason?: string };
+
+export interface Connection {
+  send: (message: unknown) => Effect.Effect<void>;
+  startMaintaining: Effect.Effect<void>;
+  disconnect: Effect.Effect<void>;
+  isConnected: Effect.Effect<boolean>;
+  checkConnection: Effect.Effect<boolean>;
+  messages: Stream.Stream<ExtensionCommandMessage>;
+  events: Stream.Stream<ConnectionEvent>;
 }
 
-export class ConnectionManager {
-  private ws: WebSocket | null = null;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private shouldMaintain = false;
-  private logger: Logger;
-  private onMessage: (message: ExtensionCommandMessage) => Promise<unknown>;
-  private onDisconnect: () => void;
+export const Connection = Context.GenericTag<Connection>("vibe/Connection");
 
-  constructor(deps: ConnectionManagerDeps) {
-    this.logger = deps.logger;
-    this.onMessage = deps.onMessage;
-    this.onDisconnect = deps.onDisconnect;
-  }
+export const ConnectionLive = Layer.effect(
+  Connection,
+  Effect.gen(function* () {
+    const logger = yield* Logger;
 
-  /**
-   * Check if WebSocket is open (may be stale if server crashed).
-   */
-  isConnected(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
-  }
+    const wsRef = yield* Ref.make<WebSocket | null>(null);
+    const maintainRef = yield* Ref.make(false);
+    const fiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, never> | null>(
+      null,
+    );
 
-  /**
-   * Validate connection by checking if server is reachable.
-   * More reliable than isConnected() as it detects server crashes.
-   */
-  async checkConnection(): Promise<boolean> {
-    if (!this.isConnected()) {
-      return false;
-    }
+    const messagesQ = yield* Queue.unbounded<ExtensionCommandMessage>();
+    const eventsQ = yield* Queue.unbounded<ConnectionEvent>();
 
-    // Verify server is actually reachable
-    try {
-      const response = await fetch("http://localhost:9222", {
+    const isConnected = Ref.get(wsRef).pipe(
+      Effect.map((ws) => ws?.readyState === WebSocket.OPEN),
+    );
+
+    const rawSend = (ws: WebSocket, message: unknown): void => {
+      try {
+        ws.send(JSON.stringify(message));
+      } catch {
+        // ignore
+      }
+    };
+
+    const send: Connection["send"] = (message) =>
+      Effect.gen(function* () {
+        const ws = yield* Ref.get(wsRef);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          rawSend(ws, message);
+        }
+      });
+
+    const closeSocket = Effect.gen(function* () {
+      const ws = yield* Ref.get(wsRef);
+      if (ws) {
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+      }
+      yield* Ref.set(wsRef, null);
+      yield* logger.clearRelaySender;
+    });
+
+    const checkServerReachable = Effect.tryPromise(async () => {
+      const response = await fetch(RELAY_HTTP, {
         method: "HEAD",
         signal: AbortSignal.timeout(1000),
       });
       return response.ok;
-    } catch {
-      // Server unreachable - close stale socket
-      if (this.ws) {
-        this.ws.close();
-        this.ws = null;
-        this.onDisconnect();
-      }
-      return false;
-    }
-  }
-
-  /**
-   * Send a message to the relay server.
-   */
-  send(message: unknown): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      try {
-        this.ws.send(JSON.stringify(message));
-      } catch (error) {
-        console.debug("Error sending message:", error);
-      }
-    }
-  }
-
-  /**
-   * Start maintaining connection (auto-reconnect).
-   */
-  startMaintaining(): void {
-    this.shouldMaintain = true;
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    this.tryConnect().catch(() => {});
-    this.reconnectTimer = setTimeout(() => this.startMaintaining(), RECONNECT_INTERVAL);
-  }
-
-  /**
-   * Stop connection maintenance.
-   */
-  stopMaintaining(): void {
-    this.shouldMaintain = false;
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-  }
-
-  /**
-   * Disconnect from relay and stop maintaining connection.
-   */
-  disconnect(): void {
-    this.stopMaintaining();
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-    this.onDisconnect();
-  }
-
-  /**
-   * Ensure connection is established, waiting if needed.
-   */
-  async ensureConnected(): Promise<void> {
-    if (this.isConnected()) return;
-
-    await this.tryConnect();
-
-    if (!this.isConnected()) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      await this.tryConnect();
-    }
-
-    if (!this.isConnected()) {
-      throw new Error("Could not connect to relay server");
-    }
-  }
-
-  /**
-   * Try to connect to relay server once.
-   */
-  private async tryConnect(): Promise<void> {
-    if (this.isConnected()) return;
-
-    // Check if server is available
-    try {
-      await fetch("http://localhost:9222", { method: "HEAD" });
-    } catch {
-      return;
-    }
-
-    this.logger.debug("Connecting to relay server...");
-    const socket = new WebSocket(RELAY_URL);
-
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error("Connection timeout"));
-      }, 5000);
-
-      socket.onopen = () => {
-        clearTimeout(timeout);
-        resolve();
-      };
-
-      socket.onerror = () => {
-        clearTimeout(timeout);
-        reject(new Error("WebSocket connection failed"));
-      };
-
-      socket.onclose = (event) => {
-        clearTimeout(timeout);
-        reject(new Error(`WebSocket closed: ${event.reason || event.code}`));
-      };
     });
 
-    this.ws = socket;
-    this.setupSocketHandlers(socket);
-    this.logger.log("Connected to relay server");
-  }
+    const tryConnectOnce = Effect.gen(function* () {
+      const already = yield* isConnected;
+      if (already) return;
 
-  /**
-   * Set up WebSocket event handlers.
-   */
-  private setupSocketHandlers(socket: WebSocket): void {
-    socket.onmessage = async (event: MessageEvent) => {
-      let message: ExtensionCommandMessage;
-      try {
-        message = JSON.parse(event.data);
-      } catch (error) {
-        this.logger.debug("Error parsing message:", error);
-        this.send({
-          error: { code: -32700, message: "Parse error" },
-        });
-        return;
+      const reachable = yield* checkServerReachable.pipe(
+        Effect.catchAll(() => Effect.succeed(false)),
+      );
+      if (!reachable) return;
+
+      yield* logger.debug("Connecting to relay server...");
+
+      const socket = yield* Effect.async<WebSocket, Error>((resume) => {
+        const ws = new WebSocket(RELAY_URL);
+
+        const timeoutId = setTimeout(() => {
+          try {
+            ws.close();
+          } catch {
+            // ignore
+          }
+          resume(Effect.fail(new Error("Connection timeout")));
+        }, 5000);
+
+        ws.onopen = () => {
+          clearTimeout(timeoutId);
+          resume(Effect.succeed(ws));
+        };
+
+        ws.onerror = () => {
+          clearTimeout(timeoutId);
+          resume(Effect.fail(new Error("WebSocket connection failed")));
+        };
+
+        ws.onclose = (event) => {
+          clearTimeout(timeoutId);
+          resume(
+            Effect.fail(
+              new Error(`WebSocket closed: ${event.reason || event.code}`),
+            ),
+          );
+        };
+      });
+
+      // Install handlers after open
+      socket.onmessage = (event: MessageEvent) => {
+        try {
+          const msg = JSON.parse(event.data) as ExtensionCommandMessage;
+          void Effect.runPromise(Queue.offer(messagesQ, msg));
+        } catch (error) {
+          void Effect.runPromise(logger.debug("Error parsing message:", error));
+          rawSend(socket, { error: { code: -32700, message: "Parse error" } });
+        }
+      };
+
+      socket.onclose = (event: CloseEvent) => {
+        void Effect.runPromise(
+          Effect.gen(function* () {
+            yield* logger.debug("Connection closed:", event.code, event.reason);
+            yield* Ref.set(wsRef, null);
+            yield* logger.clearRelaySender;
+            yield* Queue.offer(eventsQ, {
+              _tag: "Disconnected",
+              reason: event.reason || String(event.code),
+            });
+          }),
+        );
+      };
+
+      socket.onerror = (event: Event) => {
+        void Effect.runPromise(logger.debug("WebSocket error:", event));
+      };
+
+      yield* Ref.set(wsRef, socket);
+      yield* logger.setRelaySender((message) => rawSend(socket, message));
+      yield* Queue.offer(eventsQ, { _tag: "Connected" });
+      yield* logger.log("Connected to relay server");
+    });
+
+    const disconnect = Effect.gen(function* () {
+      yield* Ref.set(maintainRef, false);
+      const fiber = yield* Ref.get(fiberRef);
+      if (fiber) {
+        yield* Fiber.interrupt(fiber);
       }
+      yield* Ref.set(fiberRef, null);
+      yield* closeSocket;
+      yield* Queue.offer(eventsQ, { _tag: "Disconnected", reason: "manual" });
+    });
 
-      const response: ExtensionResponseMessage = { id: message.id };
-      try {
-        response.result = await this.onMessage(message);
-      } catch (error) {
-        this.logger.debug("Error handling command:", error);
-        response.error = (error as Error).message;
+    const maintainLoop = Effect.gen(function* () {
+      while (true) {
+        const maintaining = yield* Ref.get(maintainRef);
+        if (!maintaining) return;
+        yield* tryConnectOnce.pipe(Effect.catchAll(() => Effect.void));
+        yield* Effect.sleep(Duration.millis(RECONNECT_INTERVAL_MS));
       }
-      this.send(response);
-    };
+    });
 
-    socket.onclose = (event: CloseEvent) => {
-      this.logger.debug("Connection closed:", event.code, event.reason);
-      this.ws = null;
-      this.onDisconnect();
-      if (this.shouldMaintain) {
-        this.startMaintaining();
-      }
-    };
+    const startMaintaining = Effect.gen(function* () {
+      yield* Ref.set(maintainRef, true);
+      const existing = yield* Ref.get(fiberRef);
+      if (existing) return;
+      const fiber = yield* Effect.forkDaemon(maintainLoop);
+      yield* Ref.set(fiberRef, fiber);
+    });
 
-    socket.onerror = (event: Event) => {
-      this.logger.debug("WebSocket error:", event);
-    };
-  }
-}
+    const checkConnection = Effect.gen(function* () {
+      const connected = yield* isConnected;
+      if (!connected) return false;
+
+      const reachable = yield* checkServerReachable.pipe(
+        Effect.catchAll(() => Effect.succeed(false)),
+      );
+      if (reachable) return true;
+
+      // stale socket
+      yield* closeSocket;
+      yield* Queue.offer(eventsQ, { _tag: "Disconnected", reason: "stale" });
+      return false;
+    });
+
+    return {
+      send,
+      startMaintaining,
+      disconnect,
+      isConnected,
+      checkConnection,
+      messages: Stream.fromQueue(messagesQ),
+      events: Stream.fromQueue(eventsQ),
+    } satisfies Connection;
+  }),
+);
