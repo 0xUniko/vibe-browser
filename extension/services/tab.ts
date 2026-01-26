@@ -26,6 +26,7 @@ export interface TabRegistry {
   getTargetId: (tabId: number) => Effect.Effect<string | undefined, unknown>;
   has: (tabId: number) => Effect.Effect<boolean, unknown>;
   attach: (tabId: number) => Effect.Effect<{ targetInfo: TargetInfo }, unknown>;
+  ensureAttached: (tabId: number) => Effect.Effect<ActiveTarget, unknown>;
   detach: (
     tabId: number,
     shouldDetachDebugger: boolean,
@@ -34,6 +35,7 @@ export interface TabRegistry {
   detachAll: Effect.Effect<void, unknown>;
 
   countOpenTabs: Effect.Effect<number, unknown>;
+  getActiveTabId: Effect.Effect<{ tabId: number }, unknown>;
   getActiveTargetId: Effect.Effect<ActiveTarget, unknown>;
 
   handleCommand: (
@@ -155,7 +157,7 @@ export const TabRegistryLive = Layer.effect(
       },
     );
 
-    const getActiveTargetId: TabRegistry["getActiveTargetId"] = Effect.gen(
+    const getActiveTabId: TabRegistry["getActiveTabId"] = Effect.gen(
       function* () {
         const activeTabs = yield* Effect.tryPromise({
           try: () =>
@@ -170,19 +172,60 @@ export const TabRegistryLive = Layer.effect(
           throw new Error("No active tab found");
         }
 
+        return { tabId: activeTabId };
+      },
+    );
+
+    const ensureAttached: TabRegistry["ensureAttached"] = (tabId) =>
+      Effect.gen(function* () {
         const existingTargetId = yield* Ref.get(tabsRef).pipe(
-          Effect.map((tabs) => tabs.get(activeTabId)),
+          Effect.map((tabs) => tabs.get(tabId)),
         );
 
         if (existingTargetId) {
-          return { tabId: activeTabId, targetId: existingTargetId };
+          return { tabId, targetId: existingTargetId };
         }
 
-        // Attempt attach to the current active tab. This can fail on restricted pages
-        // like chrome://newtab or the Chrome Web Store.
-        const attached = yield* attach(activeTabId).pipe(
+        const targets = yield* Effect.tryPromise<
+          chrome.debugger.TargetInfo[],
+          Error
+        >({
+          try: () => chrome.debugger.getTargets(),
+          catch: (e) =>
+            new Error(`Failed to query debugger targets: ${errorToMessage(e)}`),
+        });
+
+        const existing = targets.find((t) => t.tabId === tabId && t.attached);
+        if (existing) {
+          const targetInfo: TargetInfo = {
+            targetId: existing.id,
+            type: existing.type,
+            title: existing.title,
+            url: existing.url,
+            attached: true,
+          };
+
+          yield* setTargetId(tabId, targetInfo.targetId);
+
+          yield* connection.send({
+            method: "forwardCDPEvent",
+            params: {
+              targetId: targetInfo.targetId,
+              method: "Target.attachedToTarget",
+              params: {
+                targetInfo,
+                waitingForDebugger: false,
+              },
+            },
+          });
+
+          return { tabId, targetId: targetInfo.targetId };
+        }
+
+        // Explicit attach only when needed.
+        return yield* attach(tabId).pipe(
           Effect.map(({ targetInfo }) => ({
-            tabId: activeTabId,
+            tabId,
             targetId: targetInfo.targetId,
           })),
           Effect.catchAll(() =>
@@ -196,8 +239,12 @@ export const TabRegistryLive = Layer.effect(
             }),
           ),
         );
+      });
 
-        return attached;
+    const getActiveTargetId: TabRegistry["getActiveTargetId"] = Effect.gen(
+      function* () {
+        const { tabId } = yield* getActiveTabId;
+        return yield* ensureAttached(tabId);
       },
     );
 
@@ -277,11 +324,13 @@ export const TabRegistryLive = Layer.effect(
       has: (tabId) =>
         Ref.get(tabsRef).pipe(Effect.map((tabs) => tabs.has(tabId))),
       attach,
+      ensureAttached,
       detach,
       handleDebuggerDetach,
       detachAll,
 
       countOpenTabs,
+      getActiveTabId,
       getActiveTargetId,
       handleCommand,
     } satisfies TabRegistry;
