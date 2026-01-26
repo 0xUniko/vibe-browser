@@ -7,13 +7,10 @@
 import { Effect, Layer, ManagedRuntime, Stream } from "effect";
 import { CDPRouter, CDPRouterLive } from "../services/CDPRouter";
 import { Connection, ConnectionLive } from "../services/ConnectionManager";
+import type { ExtensionResponseMessage } from "../services/RelayProtocol";
 import { StateStore, StateStoreLive } from "../services/StateManager";
 import { TabRegistry, TabRegistryLive } from "../services/TabManager";
-import type {
-  ExtensionResponseMessage,
-  PopupMessage,
-  StateResponse,
-} from "../utils/types";
+import type { PopupMessage, StateResponse } from "./popup/messages";
 
 export default defineBackground(() => {
   const stateLayer = StateStoreLive;

@@ -1,15 +1,23 @@
-import type { GetStateMessage, SetStateMessage, StateResponse } from "../../utils/types";
+import type {
+  GetStateMessage,
+  SetStateMessage,
+  StateResponse,
+} from "./messages";
 
 const toggle = document.getElementById("active-toggle") as HTMLInputElement;
 const statusText = document.getElementById("status-text") as HTMLSpanElement;
-const connectionStatus = document.getElementById("connection-status") as HTMLParagraphElement;
+const connectionStatus = document.getElementById(
+  "connection-status",
+) as HTMLParagraphElement;
 
 function updateUI(state: StateResponse): void {
   toggle.checked = state.isActive;
   statusText.textContent = state.isActive ? "Active" : "Inactive";
 
   if (state.isActive) {
-    connectionStatus.textContent = state.isConnected ? "Connected to relay" : "Connecting...";
+    connectionStatus.textContent = state.isConnected
+      ? "Connected to relay"
+      : "Connecting...";
     connectionStatus.className = state.isConnected
       ? "connection-status connected"
       : "connection-status connecting";
@@ -20,11 +28,14 @@ function updateUI(state: StateResponse): void {
 }
 
 function refreshState(): void {
-  chrome.runtime.sendMessage<GetStateMessage, StateResponse>({ type: "getState" }, (response) => {
-    if (response) {
-      updateUI(response);
-    }
-  });
+  chrome.runtime.sendMessage<GetStateMessage, StateResponse>(
+    { type: "getState" },
+    (response) => {
+      if (response) {
+        updateUI(response);
+      }
+    },
+  );
 }
 
 // Load initial state
@@ -47,6 +58,6 @@ toggle.addEventListener("change", () => {
       if (response) {
         updateUI(response);
       }
-    }
+    },
   );
 });

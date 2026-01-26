@@ -12,7 +12,7 @@ import {
   Ref,
   Stream,
 } from "effect";
-import type { ExtensionCommandMessage } from "../utils/types";
+import type { ExtensionCommandMessage } from "./RelayProtocol";
 
 const RELAY_URL = "ws://localhost:9222/extension";
 const RELAY_HTTP = "http://localhost:9222";

@@ -3,8 +3,8 @@
  */
 
 import { Context, Effect, Layer, Ref } from "effect";
-import type { ExtensionCommandMessage } from "../utils/types";
 import { Connection } from "./ConnectionManager";
+import type { ExtensionCommandMessage } from "./RelayProtocol";
 import { TabRegistry } from "./TabManager";
 
 export interface CDPRouter {

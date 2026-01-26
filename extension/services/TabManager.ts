@@ -3,8 +3,23 @@
  */
 
 import { Context, Effect, Layer, Ref } from "effect";
-import type { TabInfo, TargetInfo } from "../utils/types";
 import { Connection } from "./ConnectionManager";
+
+export type TabState = "connecting" | "connected" | "error";
+
+export interface TabInfo {
+  targetId?: string;
+  state: TabState;
+  errorText?: string;
+}
+
+export interface TargetInfo {
+  targetId: string;
+  type: string;
+  title: string;
+  url: string;
+  attached?: boolean;
+}
 
 export interface TabRegistry {
   get: (tabId: number) => Effect.Effect<TabInfo | undefined, unknown>;
