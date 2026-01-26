@@ -3,6 +3,7 @@
  */
 
 export interface ExtensionCommandMessage {
+  /** Correlation id for a single HTTP request bridged through WS. */
   id: number;
   method: "cdp" | "tab";
   params: {
@@ -39,3 +40,24 @@ export type ExtensionMessage =
   | ExtensionResponseMessage
   | ExtensionEventMessage
   | ExtensionLogMessage;
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null;
+
+export const isExtensionCommandMessage = (
+  v: unknown,
+): v is ExtensionCommandMessage => {
+  if (!isRecord(v)) return false;
+  if (typeof v.id !== "number") return false;
+  if (v.method !== "cdp" && v.method !== "tab") return false;
+  if (!isRecord(v.params)) return false;
+  if (typeof v.params.method !== "string") return false;
+  if (v.params.params !== undefined && !isRecord(v.params.params)) return false;
+  if (
+    v.params.targetId !== undefined &&
+    typeof v.params.targetId !== "string"
+  ) {
+    return false;
+  }
+  return true;
+};

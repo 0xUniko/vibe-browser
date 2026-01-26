@@ -6,6 +6,7 @@ import type { ServerWebSocket } from "bun";
 type ExtensionMethod = "cdp" | "tab";
 
 export interface ExtensionCommandMessage {
+  /** Correlation id for a single HTTP request bridged through WS. */
   id: number;
   method: ExtensionMethod;
   params: {
@@ -51,19 +52,6 @@ type ClientEnvelope =
       params: ExtensionCommandMessage["params"];
     }
   | { type: "ping" };
-
-type HttpCommandBody =
-  | ClientEnvelope
-  | (Omit<ExtensionCommandMessage, "id"> & { id?: number })
-  | {
-      method: ExtensionMethod;
-      params: {
-        method: string;
-        params?: Record<string, unknown>;
-        targetId?: string;
-      };
-      id?: number;
-    };
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null;
@@ -227,21 +215,9 @@ const log = (level: "info" | "warn" | "error", ...args: unknown[]): void => {
 const makeCommand = (
   partial: Omit<ExtensionCommandMessage, "id"> & { id?: number },
 ): ExtensionCommandMessage => {
-  const id = partial.id ?? state.nextId++;
+  // Always generate a fresh id for each HTTP request to avoid collisions.
+  const id = state.nextId++;
   return { ...partial, id };
-};
-
-const forwardToExtension = (
-  cmd: ExtensionCommandMessage,
-): { ok: true; id: number } | { ok: false; error: string } => {
-  const ext = state.extension;
-  if (!ext || ext.readyState !== WebSocket.OPEN) {
-    return { ok: false, error: "Extension is not connected" };
-  }
-
-  wsSendJson(ext, cmd);
-
-  return { ok: true, id: cmd.id };
 };
 
 const stopExtensionKeepalive = (): void => {
@@ -278,12 +254,16 @@ const parseHttpCommandBody = (
 ): ExtensionCommandMessage | null => {
   if (!isRecord(body)) return null;
 
-  if (isExtensionCommandMessage(body)) return body;
+  if (isExtensionCommandMessage(body)) {
+    return makeCommand({
+      method: body.method,
+      params: body.params,
+    });
+  }
 
   if (isClientEnvelope(body)) {
     if (body.type !== "command") return null;
     return makeCommand({
-      id: body.id,
       method: body.method,
       params: body.params,
     });
@@ -291,14 +271,13 @@ const parseHttpCommandBody = (
 
   const method = body.method;
   const params = body.params;
-  const id = body.id;
+  // NOTE: any incoming id from HTTP is ignored; server generates id for correlation.
 
   if (!isExtensionMethod(method)) return null;
   if (!isRecord(params)) return null;
   if (typeof params.method !== "string") return null;
 
   return makeCommand({
-    id: typeof id === "number" ? id : undefined,
     method,
     params: {
       method: params.method,
@@ -311,7 +290,7 @@ const parseHttpCommandBody = (
   });
 };
 
-const server = Bun.serve<WsData>({
+Bun.serve<WsData>({
   hostname: HOST,
   port: PORT,
   idleTimeout: 0,
@@ -381,7 +360,6 @@ const server = Bun.serve<WsData>({
               json(
                 {
                   ok: msg.error ? false : true,
-                  id: msg.id,
                   result: (msg.result ?? null) as Json,
                   error: msg.error ?? null,
                 },
@@ -521,7 +499,12 @@ const server = Bun.serve<WsData>({
         if (isExtensionResponseMessage(parsed)) {
           const hadPending = state.pending.has(parsed.id);
           if (hadPending) respondPending(parsed.id, parsed);
-          else sseBroadcast(parsed);
+          else
+            sseBroadcast({
+              type: "orphan-response",
+              result: (parsed.result ?? null) as Json,
+              error: parsed.error ?? null,
+            });
           return;
         }
 

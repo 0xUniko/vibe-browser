@@ -12,7 +12,10 @@ import {
   Ref,
   Stream,
 } from "effect";
-import type { ExtensionCommandMessage } from "./RelayProtocol";
+import {
+  isExtensionCommandMessage,
+  type ExtensionCommandMessage,
+} from "./RelayProtocol";
 
 const RELAY_URL = "ws://localhost:9222/extension";
 const RELAY_HTTP = "http://localhost:9222";
@@ -130,8 +133,10 @@ export const ConnectionLive = Layer.effect(
       // Install handlers after open
       socket.onmessage = (event: MessageEvent) => {
         try {
-          const msg = JSON.parse(event.data) as ExtensionCommandMessage;
-          void Effect.runPromise(Queue.offer(messagesQ, msg));
+          const parsed = JSON.parse(event.data) as unknown;
+          if (isExtensionCommandMessage(parsed)) {
+            void Effect.runPromise(Queue.offer(messagesQ, parsed));
+          }
         } catch {
           rawSend(socket, { error: { code: -32700, message: "Parse error" } });
         }

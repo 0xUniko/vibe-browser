@@ -68,10 +68,7 @@ export default defineBackground(() => {
     );
   };
 
-  const onDebuggerDetach = (
-    source: chrome.debugger.Debuggee,
-    reason: `${chrome.debugger.DetachReason}`,
-  ) => {
+  const onDebuggerDetach = (source: chrome.debugger.Debuggee) => {
     const tabId = source.tabId;
     if (!tabId) return;
     runFork(
@@ -168,7 +165,9 @@ export default defineBackground(() => {
         connection.messages,
         (message) =>
           Effect.gen(function* () {
-            const response: ExtensionResponseMessage = { id: message.id };
+            const response: ExtensionResponseMessage = {
+              id: message.id,
+            };
             try {
               response.result =
                 message.method === "cdp"
