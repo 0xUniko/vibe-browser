@@ -507,7 +507,13 @@ Bun.serve<WsData>({
     close(ws, code, reason) {
       const role = ws.data.role;
       if (role === "extension") {
-        if (state.extension === ws) state.extension = null;
+        // Stale/replaced sockets can still emit close; don't treat as a real disconnect.
+        if (state.extension !== ws) {
+          log("warn", "Stale extension socket closed", { code, reason });
+          return;
+        }
+
+        state.extension = null;
         stopExtensionKeepalive();
         log("warn", "Extension disconnected", { code, reason });
         sseBroadcast({ type: "status", extensionConnected: false });
