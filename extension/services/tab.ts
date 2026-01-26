@@ -104,52 +104,6 @@ export const TabRegistryLive = Layer.effect(
         return { targetInfo };
       });
 
-    const createAttachableTab = (url: string) =>
-      Effect.tryPromise({
-        try: () => chrome.tabs.create({ url, active: true }),
-        catch: (e) =>
-          new Error(`Failed to create tab for ${url}: ${errorToMessage(e)}`),
-      }).pipe(
-        Effect.flatMap((tab) => {
-          const tabId = tab.id;
-          if (typeof tabId !== "number") {
-            return Effect.fail(
-              new Error("chrome.tabs.create returned no tab id"),
-            );
-          }
-
-          return Effect.async<void, Error>((resume) => {
-            const timeoutId = setTimeout(() => {
-              chrome.tabs.onUpdated.removeListener(onUpdated);
-              resume(
-                Effect.fail(
-                  new Error(`Timeout waiting for tab ${tabId} to load`),
-                ),
-              );
-            }, 10_000);
-
-            const onUpdated = (
-              updatedTabId: number,
-              info: chrome.tabs.OnUpdatedInfo,
-            ) => {
-              if (updatedTabId !== tabId) return;
-              if (info.status !== "complete") return;
-
-              clearTimeout(timeoutId);
-              chrome.tabs.onUpdated.removeListener(onUpdated);
-              resume(Effect.succeed(void 0));
-            };
-
-            chrome.tabs.onUpdated.addListener(onUpdated);
-
-            return Effect.sync(() => {
-              clearTimeout(timeoutId);
-              chrome.tabs.onUpdated.removeListener(onUpdated);
-            });
-          }).pipe(Effect.as(tabId));
-        }),
-      );
-
     const countOpenTabs: TabRegistry["countOpenTabs"] = Effect.tryPromise(
       async () => {
         const tabs = await chrome.tabs.query({});
@@ -229,14 +183,8 @@ export const TabRegistryLive = Layer.effect(
             targetId: targetInfo.targetId,
           })),
           Effect.catchAll(() =>
-            Effect.gen(function* () {
-              // Fallback: open an attachable https page and attach there.
-              const fallbackTabId = yield* createAttachableTab(
-                "https://example.com",
-              );
-              const { targetInfo } = yield* attach(fallbackTabId);
-              return { tabId: fallbackTabId, targetId: targetInfo.targetId };
-            }),
+            // attach failed -> fail fast, do not open hidden tab
+            Effect.fail(new Error("Attach failed on current tab")),
           ),
         );
       });
