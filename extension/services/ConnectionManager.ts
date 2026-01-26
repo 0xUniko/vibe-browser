@@ -19,6 +19,7 @@ import {
 
 const RELAY_URL = "ws://localhost:9222/extension";
 const RELAY_HTTP = "http://localhost:9222";
+const RELAY_HEALTH = new URL("/healthz", RELAY_HTTP).toString();
 const RECONNECT_INTERVAL_MS = 3000;
 
 export type ConnectionEvent =
@@ -82,7 +83,7 @@ export const ConnectionLive = Layer.effect(
     });
 
     const checkServerReachable = Effect.tryPromise(async () => {
-      const response = await fetch(RELAY_HTTP, {
+      const response = await fetch(RELAY_HEALTH, {
         method: "HEAD",
         signal: AbortSignal.timeout(1000),
       });

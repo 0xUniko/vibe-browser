@@ -4,7 +4,7 @@ This `skill` is a **Bun-only** local relay server. It forwards messages produced
 
 The extension connects proactively:
 
-- HTTP health probe: `HEAD http://localhost:9222/`
+- HTTP health probe: `HEAD http://localhost:9222/healthz`
 - WebSocket：`ws://localhost:9222/extension`
 
 So the skill must expose HTTP + WS on local port `9222`.
@@ -34,8 +34,7 @@ bun server.ts
 
 ### HTTP
 
-- `HEAD /`: used by the extension on startup to check whether the relay is available (returns `200`)
-- `GET /`: returns current connection status (whether the extension is connected, number of clients)
+- `HEAD /healthz`: used by the extension on startup to check whether the relay is available (returns `200`)
 - `GET /healthz`: simple health check
 - `POST /command`: optional “HTTP→WS” bridge (internally performs a single request/response via the extension WS)
 

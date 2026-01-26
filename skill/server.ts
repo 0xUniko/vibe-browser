@@ -297,29 +297,20 @@ Bun.serve<WsData>({
   fetch(req, bunServer) {
     const url = new URL(req.url);
 
-    // Health check used by the extension before opening WS
-    if (req.method === "HEAD" && url.pathname === "/") {
-      return new Response(null, { status: 200 });
-    }
-
-    if (url.pathname === "/" && req.method === "GET") {
-      return json({
-        ok: true,
-        extensionConnected:
-          state.extension?.readyState === WebSocket.OPEN ? true : false,
-        sseClients: state.sseClients.size,
-      });
-    }
-
+    // Health check (single endpoint)
     if (url.pathname === "/healthz") {
-      return json(
-        {
-          ok: true,
-          extensionConnected:
-            state.extension?.readyState === WebSocket.OPEN ? true : false,
-        },
-        { status: 200 },
-      );
+      if (req.method === "HEAD") return new Response(null, { status: 200 });
+      if (req.method === "GET") {
+        return json(
+          {
+            ok: true,
+            extensionConnected:
+              state.extension?.readyState === WebSocket.OPEN ? true : false,
+          },
+          { status: 200 },
+        );
+      }
+      return new Response(null, { status: 405 });
     }
 
     const handleHttpCommand = async (): Promise<Response> => {
@@ -376,14 +367,6 @@ Bun.serve<WsData>({
 
     // HTTP command bridge (primary public API)
     if (url.pathname === "/command" && req.method === "POST") {
-      return handleHttpCommand();
-    }
-
-    // Convenience endpoints
-    if (
-      (url.pathname === "/cdp" || url.pathname === "/tab") &&
-      req.method === "POST"
-    ) {
       return handleHttpCommand();
     }
 
