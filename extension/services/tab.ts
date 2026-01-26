@@ -6,6 +6,9 @@ import { Context, Effect, Layer, Ref } from "effect";
 import { Connection } from "./ConnectionManager";
 import type { ExtensionCommandMessage } from "./RelayProtocol";
 
+const errorToMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 export interface ActiveTarget {
   tabId: number;
   targetId: string;
@@ -65,11 +68,22 @@ export const TabRegistryLive = Layer.effect(
     const attach: TabRegistry["attach"] = (tabId) =>
       Effect.gen(function* () {
         const debuggee = { tabId };
-        yield* Effect.tryPromise(() => chrome.debugger.attach(debuggee, "1.3"));
+        yield* Effect.tryPromise({
+          try: () => chrome.debugger.attach(debuggee, "1.3"),
+          catch: (e) =>
+            new Error(
+              `Failed to attach debugger to tab ${tabId}: ${errorToMessage(e)}`,
+            ),
+        });
 
-        const result = (yield* Effect.tryPromise(() =>
-          chrome.debugger.sendCommand(debuggee, "Target.getTargetInfo"),
-        )) as { targetInfo: TargetInfo };
+        const result = (yield* Effect.tryPromise({
+          try: () =>
+            chrome.debugger.sendCommand(debuggee, "Target.getTargetInfo"),
+          catch: (e) =>
+            new Error(
+              `Failed to get TargetInfo for tab ${tabId}: ${errorToMessage(e)}`,
+            ),
+        })) as { targetInfo: TargetInfo };
 
         const targetInfo = result.targetInfo;
         yield* setTargetId(tabId, targetInfo.targetId);
@@ -88,6 +102,52 @@ export const TabRegistryLive = Layer.effect(
         return { targetInfo };
       });
 
+    const createAttachableTab = (url: string) =>
+      Effect.tryPromise({
+        try: () => chrome.tabs.create({ url, active: true }),
+        catch: (e) =>
+          new Error(`Failed to create tab for ${url}: ${errorToMessage(e)}`),
+      }).pipe(
+        Effect.flatMap((tab) => {
+          const tabId = tab.id;
+          if (typeof tabId !== "number") {
+            return Effect.fail(
+              new Error("chrome.tabs.create returned no tab id"),
+            );
+          }
+
+          return Effect.async<void, Error>((resume) => {
+            const timeoutId = setTimeout(() => {
+              chrome.tabs.onUpdated.removeListener(onUpdated);
+              resume(
+                Effect.fail(
+                  new Error(`Timeout waiting for tab ${tabId} to load`),
+                ),
+              );
+            }, 10_000);
+
+            const onUpdated = (
+              updatedTabId: number,
+              info: chrome.tabs.OnUpdatedInfo,
+            ) => {
+              if (updatedTabId !== tabId) return;
+              if (info.status !== "complete") return;
+
+              clearTimeout(timeoutId);
+              chrome.tabs.onUpdated.removeListener(onUpdated);
+              resume(Effect.succeed(void 0));
+            };
+
+            chrome.tabs.onUpdated.addListener(onUpdated);
+
+            return Effect.sync(() => {
+              clearTimeout(timeoutId);
+              chrome.tabs.onUpdated.removeListener(onUpdated);
+            });
+          }).pipe(Effect.as(tabId));
+        }),
+      );
+
     const countOpenTabs: TabRegistry["countOpenTabs"] = Effect.tryPromise(
       async () => {
         const tabs = await chrome.tabs.query({});
@@ -97,26 +157,47 @@ export const TabRegistryLive = Layer.effect(
 
     const getActiveTargetId: TabRegistry["getActiveTargetId"] = Effect.gen(
       function* () {
-        const activeTabs = yield* Effect.tryPromise(() =>
-          chrome.tabs.query({ active: true, lastFocusedWindow: true }),
-        );
+        const activeTabs = yield* Effect.tryPromise({
+          try: () =>
+            chrome.tabs.query({ active: true, lastFocusedWindow: true }),
+          catch: (e) =>
+            new Error(`Failed to query active tab: ${errorToMessage(e)}`),
+        });
 
         const activeTab = activeTabs[0];
-        const tabId = activeTab?.id;
-        if (typeof tabId !== "number") {
+        const activeTabId = activeTab?.id;
+        if (typeof activeTabId !== "number") {
           throw new Error("No active tab found");
         }
 
         const existingTargetId = yield* Ref.get(tabsRef).pipe(
-          Effect.map((tabs) => tabs.get(tabId)),
+          Effect.map((tabs) => tabs.get(activeTabId)),
         );
 
         if (existingTargetId) {
-          return { tabId, targetId: existingTargetId };
+          return { tabId: activeTabId, targetId: existingTargetId };
         }
 
-        const { targetInfo } = yield* attach(tabId);
-        return { tabId, targetId: targetInfo.targetId };
+        // Attempt attach to the current active tab. This can fail on restricted pages
+        // like chrome://newtab or the Chrome Web Store.
+        const attached = yield* attach(activeTabId).pipe(
+          Effect.map(({ targetInfo }) => ({
+            tabId: activeTabId,
+            targetId: targetInfo.targetId,
+          })),
+          Effect.catchAll(() =>
+            Effect.gen(function* () {
+              // Fallback: open an attachable https page and attach there.
+              const fallbackTabId = yield* createAttachableTab(
+                "https://example.com",
+              );
+              const { targetInfo } = yield* attach(fallbackTabId);
+              return { tabId: fallbackTabId, targetId: targetInfo.targetId };
+            }),
+          ),
+        );
+
+        return attached;
       },
     );
 

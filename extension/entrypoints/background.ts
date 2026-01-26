@@ -167,11 +167,14 @@ export default defineBackground(() => {
       const cdp = yield* CDP;
       const tabs = yield* TabRegistry;
 
+      const errorToMessage = (error: unknown): string =>
+        error instanceof Error ? error.message : String(error);
+
       const processEvents = Stream.runForEach(connection.events, (event) =>
         event._tag === "Disconnected"
           ? Effect.gen(function* () {
               const tabs = yield* TabRegistry;
-              yield* tabs.detachAll;
+              yield* tabs.detachAll.pipe(Effect.catchAll(() => Effect.void));
             })
           : Effect.void,
       );
@@ -180,19 +183,28 @@ export default defineBackground(() => {
         connection.messages,
         (message) =>
           Effect.gen(function* () {
-            const response: ExtensionResponseMessage = {
-              id: message.id,
-            };
-            try {
-              response.result =
-                message.method === "cdp"
-                  ? yield* cdp.handleCommand(message)
-                  : yield* tabs.handleCommand(message);
-            } catch (error) {
-              response.error = (error as Error).message;
-            }
+            const effectResult =
+              message.method === "cdp"
+                ? cdp.handleCommand(message)
+                : tabs.handleCommand(message);
+
+            const response = yield* effectResult.pipe(
+              Effect.map(
+                (result): ExtensionResponseMessage => ({
+                  id: message.id,
+                  result,
+                }),
+              ),
+              Effect.catchAll((error) =>
+                Effect.succeed<ExtensionResponseMessage>({
+                  id: message.id,
+                  error: errorToMessage(error),
+                }),
+              ),
+            );
+
             yield* connection.send(response);
-          }),
+          }).pipe(Effect.catchAll(() => Effect.void)),
       );
 
       yield* Effect.forkDaemon(processEvents);
