@@ -5,9 +5,9 @@
 import { Context, Effect, Layer } from "effect";
 import { Connection } from "./ConnectionManager";
 import type { ExtensionCommandMessage } from "./RelayProtocol";
-import { TabRegistry } from "./TabManager";
+import { TabRegistry } from "./tab";
 
-export interface CDPRouter {
+export interface CDP {
   handleCommand: (
     msg: ExtensionCommandMessage,
   ) => Effect.Effect<unknown, unknown>;
@@ -18,15 +18,15 @@ export interface CDPRouter {
   ) => Effect.Effect<void, unknown>;
 }
 
-export const CDPRouter = Context.GenericTag<CDPRouter>("vibe/CDPRouter");
+export const CDP = Context.GenericTag<CDP>("vibe/CDP");
 
-export const CDPRouterLive = Layer.effect(
-  CDPRouter,
+export const CDPLive = Layer.effect(
+  CDP,
   Effect.gen(function* () {
     const tabs = yield* TabRegistry;
     const connection = yield* Connection;
 
-    const handleCommand: CDPRouter["handleCommand"] = (msg) =>
+    const handleCommand: CDP["handleCommand"] = (msg) =>
       Effect.gen(function* () {
         if (msg.method !== "cdp") return undefined;
 
@@ -50,14 +50,16 @@ export const CDPRouterLive = Layer.effect(
         );
       });
 
-    const handleDebuggerEvent: CDPRouter["handleDebuggerEvent"] = (
+    const handleDebuggerEvent: CDP["handleDebuggerEvent"] = (
       source,
       method,
       params,
     ) =>
       Effect.gen(function* () {
-        const tab = source.tabId ? yield* tabs.get(source.tabId) : undefined;
-        const effectiveTargetId = source.targetId ?? tab?.targetId;
+        const tabTargetId = source.tabId
+          ? yield* tabs.getTargetId(source.tabId)
+          : undefined;
+        const effectiveTargetId = source.targetId ?? tabTargetId;
         if (!effectiveTargetId) return;
 
         yield* connection.send({
@@ -73,6 +75,6 @@ export const CDPRouterLive = Layer.effect(
     return {
       handleCommand,
       handleDebuggerEvent,
-    } satisfies CDPRouter;
+    } satisfies CDP;
   }),
 );

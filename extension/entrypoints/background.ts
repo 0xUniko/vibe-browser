@@ -5,18 +5,18 @@
  */
 
 import { Effect, Layer, ManagedRuntime, Stream } from "effect";
-import { CDPRouter, CDPRouterLive } from "../services/CDPRouter";
+import { CDP, CDPLive } from "../services/cdp";
 import { Connection, ConnectionLive } from "../services/ConnectionManager";
 import type { ExtensionResponseMessage } from "../services/RelayProtocol";
 import { StateStore, StateStoreLive } from "../services/StateManager";
-import { TabRegistry, TabRegistryLive } from "../services/TabManager";
+import { TabRegistry, TabRegistryLive } from "../services/tab";
 import type { PopupMessage, StateResponse } from "./popup/messages";
 
 export default defineBackground(() => {
   const stateLayer = StateStoreLive;
   const connectionLayer = ConnectionLive;
   const tabLayer = TabRegistryLive.pipe(Layer.provide(connectionLayer));
-  const routerLayer = CDPRouterLive.pipe(
+  const cdpRouterLayer = CDPLive.pipe(
     Layer.provide(connectionLayer),
     Layer.provide(tabLayer),
   );
@@ -25,12 +25,12 @@ export default defineBackground(() => {
     stateLayer,
     connectionLayer,
     tabLayer,
-    routerLayer,
+    cdpRouterLayer,
   );
 
   const runtime = ManagedRuntime.make(MainLayer);
 
-  type AppEnv = Connection | TabRegistry | CDPRouter | StateStore;
+  type AppEnv = Connection | TabRegistry | CDP | StateStore;
 
   const runFork = <A, E, R>(eff: Effect.Effect<A, E, R>) => {
     runtime.runFork(eff as Effect.Effect<A, E, AppEnv>);
@@ -62,7 +62,7 @@ export default defineBackground(() => {
   ) => {
     runFork(
       Effect.gen(function* () {
-        const router = yield* CDPRouter;
+        const router = yield* CDP;
         yield* router.handleDebuggerEvent(source, method, params);
       }),
     );
@@ -133,7 +133,6 @@ export default defineBackground(() => {
   );
 
   // Set up event listeners
-
   chrome.tabs.onRemoved.addListener((tabId) => {
     runFork(
       Effect.gen(function* () {
@@ -153,7 +152,8 @@ export default defineBackground(() => {
   runFork(
     Effect.gen(function* () {
       const connection = yield* Connection;
-      const router = yield* CDPRouter;
+      const cdp = yield* CDP;
+      const tabs = yield* TabRegistry;
 
       const processEvents = Stream.runForEach(connection.events, (event) =>
         event._tag === "Disconnected"
@@ -170,7 +170,10 @@ export default defineBackground(() => {
           Effect.gen(function* () {
             const response: ExtensionResponseMessage = { id: message.id };
             try {
-              response.result = yield* router.handleCommand(message);
+              response.result =
+                message.method === "cdp"
+                  ? yield* cdp.handleCommand(message)
+                  : yield* tabs.handleCommand(message);
             } catch (error) {
               response.error = (error as Error).message;
             }

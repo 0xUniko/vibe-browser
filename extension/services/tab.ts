@@ -4,13 +4,11 @@
 
 import { Context, Effect, Layer, Ref } from "effect";
 import { Connection } from "./ConnectionManager";
+import type { ExtensionCommandMessage } from "./RelayProtocol";
 
-export type TabState = "connecting" | "connected" | "error";
-
-export interface TabInfo {
-  targetId?: string;
-  state: TabState;
-  errorText?: string;
+export interface ActiveTarget {
+  tabId: number;
+  targetId: string;
 }
 
 export interface TargetInfo {
@@ -22,12 +20,8 @@ export interface TargetInfo {
 }
 
 export interface TabRegistry {
-  get: (tabId: number) => Effect.Effect<TabInfo | undefined, unknown>;
+  getTargetId: (tabId: number) => Effect.Effect<string | undefined, unknown>;
   has: (tabId: number) => Effect.Effect<boolean, unknown>;
-  set: (tabId: number, info: TabInfo) => Effect.Effect<void, unknown>;
-  getByTargetId: (
-    targetId: string,
-  ) => Effect.Effect<{ tabId: number; tab: TabInfo } | undefined, unknown>;
   attach: (tabId: number) => Effect.Effect<{ targetInfo: TargetInfo }, unknown>;
   detach: (
     tabId: number,
@@ -35,6 +29,13 @@ export interface TabRegistry {
   ) => Effect.Effect<void, unknown>;
   handleDebuggerDetach: (tabId: number) => Effect.Effect<void, unknown>;
   detachAll: Effect.Effect<void, unknown>;
+
+  countOpenTabs: Effect.Effect<number, unknown>;
+  getActiveTargetId: Effect.Effect<ActiveTarget, unknown>;
+
+  handleCommand: (
+    msg: ExtensionCommandMessage,
+  ) => Effect.Effect<unknown, unknown>;
 }
 
 export const TabRegistry = Context.GenericTag<TabRegistry>("vibe/TabRegistry");
@@ -44,12 +45,13 @@ export const TabRegistryLive = Layer.effect(
   Effect.gen(function* () {
     const connection = yield* Connection;
 
-    const tabsRef = yield* Ref.make<ReadonlyMap<number, TabInfo>>(new Map());
+    // Only track attached tabs: tabId -> targetId
+    const tabsRef = yield* Ref.make<ReadonlyMap<number, string>>(new Map());
 
-    const setTab = (tabId: number, info: TabInfo) =>
+    const setTargetId = (tabId: number, targetId: string) =>
       Ref.update(tabsRef, (tabs) => {
         const next = new Map(tabs);
-        next.set(tabId, info);
+        next.set(tabId, targetId);
         return next;
       });
 
@@ -59,16 +61,6 @@ export const TabRegistryLive = Layer.effect(
         next.delete(tabId);
         return next;
       });
-
-    const getByTargetId: TabRegistry["getByTargetId"] = (targetId) =>
-      Ref.get(tabsRef).pipe(
-        Effect.map((tabs) => {
-          for (const [tabId, tab] of tabs) {
-            if (tab.targetId === targetId) return { tabId, tab };
-          }
-          return undefined;
-        }),
-      );
 
     const attach: TabRegistry["attach"] = (tabId) =>
       Effect.gen(function* () {
@@ -80,10 +72,7 @@ export const TabRegistryLive = Layer.effect(
         )) as { targetInfo: TargetInfo };
 
         const targetInfo = result.targetInfo;
-        yield* setTab(tabId, {
-          targetId: targetInfo.targetId,
-          state: "connected",
-        });
+        yield* setTargetId(tabId, targetInfo.targetId);
 
         yield* connection.send({
           method: "forwardCDPEvent",
@@ -99,18 +88,50 @@ export const TabRegistryLive = Layer.effect(
         return { targetInfo };
       });
 
+    const countOpenTabs: TabRegistry["countOpenTabs"] = Effect.tryPromise(
+      async () => {
+        const tabs = await chrome.tabs.query({});
+        return tabs.length;
+      },
+    );
+
+    const getActiveTargetId: TabRegistry["getActiveTargetId"] = Effect.gen(
+      function* () {
+        const activeTabs = yield* Effect.tryPromise(() =>
+          chrome.tabs.query({ active: true, lastFocusedWindow: true }),
+        );
+
+        const activeTab = activeTabs[0];
+        const tabId = activeTab?.id;
+        if (typeof tabId !== "number") {
+          throw new Error("No active tab found");
+        }
+
+        const existingTargetId = yield* Ref.get(tabsRef).pipe(
+          Effect.map((tabs) => tabs.get(tabId)),
+        );
+
+        if (existingTargetId) {
+          return { tabId, targetId: existingTargetId };
+        }
+
+        const { targetInfo } = yield* attach(tabId);
+        return { tabId, targetId: targetInfo.targetId };
+      },
+    );
+
     const detach: TabRegistry["detach"] = (tabId, shouldDetachDebugger) =>
       Effect.gen(function* () {
         const tabs = yield* Ref.get(tabsRef);
-        const tab = tabs.get(tabId);
-        if (!tab) return;
+        const targetId = tabs.get(tabId);
+        if (!targetId) return;
 
         yield* connection.send({
           method: "forwardCDPEvent",
           params: {
             method: "Target.detachedFromTarget",
-            targetId: tab.targetId,
-            params: { targetId: tab.targetId },
+            targetId,
+            params: { targetId },
           },
         });
 
@@ -126,17 +147,9 @@ export const TabRegistryLive = Layer.effect(
     const handleDebuggerDetach: TabRegistry["handleDebuggerDetach"] = (tabId) =>
       Effect.gen(function* () {
         const tabs = yield* Ref.get(tabsRef);
-        const tab = tabs.get(tabId);
-        if (!tab) return;
+        const targetId = tabs.get(tabId);
+        if (!targetId) return;
 
-        yield* connection.send({
-          method: "forwardCDPEvent",
-          params: {
-            method: "Target.detachedFromTarget",
-            targetId: tab.targetId,
-            params: { targetId: tab.targetId },
-          },
-        });
         yield* deleteTab(tabId);
       });
 
@@ -150,17 +163,46 @@ export const TabRegistryLive = Layer.effect(
       yield* Ref.set(tabsRef, new Map());
     });
 
+    const handleCommand: TabRegistry["handleCommand"] = (msg) =>
+      Effect.gen(function* () {
+        if (msg.method !== "tab") return undefined;
+
+        switch (msg.params.method) {
+          case "countTabs":
+          case "tab.countTabs": {
+            return yield* countOpenTabs;
+          }
+
+          case "getActiveTargetId":
+          case "tab.getActiveTargetId": {
+            const result = yield* getActiveTargetId;
+            return result.targetId;
+          }
+
+          case "getActiveTarget":
+          case "tab.getActiveTarget": {
+            return yield* getActiveTargetId;
+          }
+
+          default: {
+            throw new Error(`Unknown tab method: ${msg.params.method}`);
+          }
+        }
+      });
+
     return {
-      get: (tabId) =>
+      getTargetId: (tabId) =>
         Ref.get(tabsRef).pipe(Effect.map((tabs) => tabs.get(tabId))),
       has: (tabId) =>
         Ref.get(tabsRef).pipe(Effect.map((tabs) => tabs.has(tabId))),
-      set: setTab,
-      getByTargetId,
       attach,
       detach,
       handleDebuggerDetach,
       detachAll,
+
+      countOpenTabs,
+      getActiveTargetId,
+      handleCommand,
     } satisfies TabRegistry;
   }),
 );
