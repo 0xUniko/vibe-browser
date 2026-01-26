@@ -13,6 +13,9 @@ import { TabRegistry, TabRegistryLive } from "../services/tab";
 import type { PopupMessage, StateResponse } from "./popup/messages";
 
 export default defineBackground(() => {
+  const KEEPALIVE_ALARM = "keepAlive";
+  const KEEPALIVE_PERIOD_MINUTES = 0.5;
+
   const stateLayer = StateStoreLive;
   const connectionLayer = ConnectionLive;
   const tabLayer = TabRegistryLive.pipe(Layer.provide(connectionLayer));
@@ -42,14 +45,26 @@ export default defineBackground(() => {
       chrome.action.setBadgeBackgroundColor({ color: "#4CAF50" });
     });
 
+  const createKeepAliveAlarm = Effect.sync(() => {
+    chrome.alarms.create(KEEPALIVE_ALARM, {
+      periodInMinutes: KEEPALIVE_PERIOD_MINUTES,
+    });
+  });
+
+  const clearKeepAliveAlarm = Effect.sync(() => {
+    chrome.alarms.clear(KEEPALIVE_ALARM);
+  });
+
   const handleStateChange = (isActive: boolean) =>
     Effect.gen(function* () {
       const state = yield* StateStore;
       const connection = yield* Connection;
       yield* state.set({ isActive });
       if (isActive) {
+        yield* createKeepAliveAlarm;
         yield* connection.startMaintaining;
       } else {
+        yield* clearKeepAliveAlarm;
         yield* connection.disconnect;
       }
       yield* updateBadge(isActive);
@@ -202,6 +217,28 @@ export default defineBackground(() => {
     }),
   );
 
+  // Keep-alive: periodically wake the service worker and ensure connection is maintained.
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name !== KEEPALIVE_ALARM) return;
+    runFork(
+      Effect.gen(function* () {
+        const state = yield* StateStore;
+        const connection = yield* Connection;
+        const current = yield* state.get;
+
+        if (!current.isActive) {
+          yield* clearKeepAliveAlarm;
+          return;
+        }
+
+        const connected = yield* connection.isConnected;
+        if (!connected) {
+          yield* connection.startMaintaining;
+        }
+      }),
+    );
+  });
+
   runFork(
     Effect.gen(function* () {
       const state = yield* StateStore;
@@ -209,7 +246,10 @@ export default defineBackground(() => {
       const current = yield* state.get;
       yield* updateBadge(current.isActive);
       if (current.isActive) {
+        yield* createKeepAliveAlarm;
         yield* connection.startMaintaining;
+      } else {
+        yield* clearKeepAliveAlarm;
       }
     }),
   );

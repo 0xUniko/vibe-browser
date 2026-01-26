@@ -4,7 +4,7 @@ export default defineConfig({
   manifest: {
     name: "vibe-browser",
     description: "vibe browsing!",
-    permissions: ["debugger", "tabGroups", "storage"],
+    permissions: ["debugger", "tabGroups", "storage", "alarms"],
     host_permissions: ["<all_urls>"],
     icons: {
       16: "icon/16.png",
