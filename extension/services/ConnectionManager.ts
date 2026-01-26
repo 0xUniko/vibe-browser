@@ -13,7 +13,6 @@ import {
   Stream,
 } from "effect";
 import type { ExtensionCommandMessage } from "../utils/types";
-import { Logger } from "./Logger";
 
 const RELAY_URL = "ws://localhost:9222/extension";
 const RELAY_HTTP = "http://localhost:9222";
@@ -38,8 +37,6 @@ export const Connection = Context.GenericTag<Connection>("vibe/Connection");
 export const ConnectionLive = Layer.effect(
   Connection,
   Effect.gen(function* () {
-    const logger = yield* Logger;
-
     const wsRef = yield* Ref.make<WebSocket | null>(null);
     const maintainRef = yield* Ref.make(false);
     const fiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, never> | null>(
@@ -79,7 +76,6 @@ export const ConnectionLive = Layer.effect(
         }
       }
       yield* Ref.set(wsRef, null);
-      yield* logger.clearRelaySender;
     });
 
     const checkServerReachable = Effect.tryPromise(async () => {
@@ -98,8 +94,6 @@ export const ConnectionLive = Layer.effect(
         Effect.catchAll(() => Effect.succeed(false)),
       );
       if (!reachable) return;
-
-      yield* logger.debug("Connecting to relay server...");
 
       const socket = yield* Effect.async<WebSocket, Error>((resume) => {
         const ws = new WebSocket(RELAY_URL);
@@ -138,8 +132,7 @@ export const ConnectionLive = Layer.effect(
         try {
           const msg = JSON.parse(event.data) as ExtensionCommandMessage;
           void Effect.runPromise(Queue.offer(messagesQ, msg));
-        } catch (error) {
-          void Effect.runPromise(logger.debug("Error parsing message:", error));
+        } catch {
           rawSend(socket, { error: { code: -32700, message: "Parse error" } });
         }
       };
@@ -147,9 +140,7 @@ export const ConnectionLive = Layer.effect(
       socket.onclose = (event: CloseEvent) => {
         void Effect.runPromise(
           Effect.gen(function* () {
-            yield* logger.debug("Connection closed:", event.code, event.reason);
             yield* Ref.set(wsRef, null);
-            yield* logger.clearRelaySender;
             yield* Queue.offer(eventsQ, {
               _tag: "Disconnected",
               reason: event.reason || String(event.code),
@@ -158,14 +149,8 @@ export const ConnectionLive = Layer.effect(
         );
       };
 
-      socket.onerror = (event: Event) => {
-        void Effect.runPromise(logger.debug("WebSocket error:", event));
-      };
-
       yield* Ref.set(wsRef, socket);
-      yield* logger.setRelaySender((message) => rawSend(socket, message));
       yield* Queue.offer(eventsQ, { _tag: "Connected" });
-      yield* logger.log("Connected to relay server");
     });
 
     const disconnect = Effect.gen(function* () {

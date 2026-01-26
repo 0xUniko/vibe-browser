@@ -5,7 +5,6 @@
 import { Context, Effect, Layer, Ref } from "effect";
 import type { ExtensionCommandMessage } from "../utils/types";
 import { Connection } from "./ConnectionManager";
-import { Logger } from "./Logger";
 import { TabRegistry } from "./TabManager";
 
 export interface CDPRouter {
@@ -24,7 +23,6 @@ export const CDPRouter = Context.GenericTag<CDPRouter>("vibe/CDPRouter");
 export const CDPRouterLive = Layer.effect(
   CDPRouter,
   Effect.gen(function* () {
-    const logger = yield* Logger;
     const tabs = yield* TabRegistry;
     const connection = yield* Connection;
 
@@ -120,11 +118,6 @@ export const CDPRouterLive = Layer.effect(
               const { targetInfo } = yield* tabs.attach(maybeTabId);
               return { targetId: targetInfo.targetId };
             }
-
-            yield* logger.debug(
-              "Attaching debugger to non-tab target:",
-              targetId,
-            );
             yield* Effect.tryPromise(() =>
               chrome.debugger.attach({ targetId }, "1.3"),
             );
@@ -182,11 +175,6 @@ export const CDPRouterLive = Layer.effect(
               const { targetInfo } = yield* tabs.attach(maybeTabId);
               return { targetId: targetInfo.targetId };
             }
-
-            yield* logger.debug(
-              "Attaching debugger to non-tab target:",
-              targetId,
-            );
             yield* Effect.tryPromise(() =>
               chrome.debugger.attach({ targetId }, "1.3"),
             );
@@ -216,7 +204,6 @@ export const CDPRouterLive = Layer.effect(
 
           case "Target.createTarget": {
             const url = (msg.params.params?.url as string) || "about:blank";
-            yield* logger.debug("Creating new tab with URL:", url);
             const tab = yield* Effect.tryPromise(() =>
               chrome.tabs.create({ url, active: false }),
             );
@@ -259,13 +246,6 @@ export const CDPRouterLive = Layer.effect(
           );
         }
 
-        yield* logger.debug(
-          "CDP command:",
-          msg.params.method,
-          "for targetId:",
-          targetId,
-        );
-
         return yield* Effect.tryPromise(() =>
           chrome.debugger.sendCommand(
             debuggee,
@@ -284,13 +264,6 @@ export const CDPRouterLive = Layer.effect(
         const tab = source.tabId ? yield* tabs.get(source.tabId) : undefined;
         const effectiveTargetId = source.targetId ?? tab?.targetId;
         if (!effectiveTargetId) return;
-
-        yield* logger.debug(
-          "Forwarding CDP event:",
-          method,
-          "from targetId:",
-          effectiveTargetId,
-        );
 
         yield* connection.send({
           method: "forwardCDPEvent",

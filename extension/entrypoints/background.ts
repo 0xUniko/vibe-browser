@@ -7,7 +7,6 @@
 import { Effect, Layer, ManagedRuntime, Stream } from "effect";
 import { CDPRouter, CDPRouterLive } from "../services/CDPRouter";
 import { Connection, ConnectionLive } from "../services/ConnectionManager";
-import { Logger, LoggerLive } from "../services/Logger";
 import { StateStore, StateStoreLive } from "../services/StateManager";
 import { TabRegistry, TabRegistryLive } from "../services/TabManager";
 import type {
@@ -17,21 +16,15 @@ import type {
 } from "../utils/types";
 
 export default defineBackground(() => {
-  const loggerLayer = LoggerLive;
   const stateLayer = StateStoreLive;
-  const connectionLayer = ConnectionLive.pipe(Layer.provide(loggerLayer));
-  const tabLayer = TabRegistryLive.pipe(
-    Layer.provide(loggerLayer),
-    Layer.provide(connectionLayer),
-  );
+  const connectionLayer = ConnectionLive;
+  const tabLayer = TabRegistryLive.pipe(Layer.provide(connectionLayer));
   const routerLayer = CDPRouterLive.pipe(
-    Layer.provide(loggerLayer),
     Layer.provide(connectionLayer),
     Layer.provide(tabLayer),
   );
 
   const MainLayer = Layer.mergeAll(
-    loggerLayer,
     stateLayer,
     connectionLayer,
     tabLayer,
@@ -40,7 +33,7 @@ export default defineBackground(() => {
 
   const runtime = ManagedRuntime.make(MainLayer);
 
-  type AppEnv = Logger | Connection | TabRegistry | CDPRouter | StateStore;
+  type AppEnv = Connection | TabRegistry | CDPRouter | StateStore;
 
   const runFork = <A, E, R>(eff: Effect.Effect<A, E, R>) => {
     runtime.runFork(eff as Effect.Effect<A, E, AppEnv>);
@@ -86,9 +79,7 @@ export default defineBackground(() => {
     if (!tabId) return;
     runFork(
       Effect.gen(function* () {
-        const logger = yield* Logger;
         const tabs = yield* TabRegistry;
-        yield* logger.debug(`Debugger detached for tab ${tabId}: ${reason}`);
         yield* tabs.handleDebuggerDetach(tabId);
       }),
     );
@@ -150,10 +141,8 @@ export default defineBackground(() => {
     runFork(
       Effect.gen(function* () {
         const tabs = yield* TabRegistry;
-        const logger = yield* Logger;
         const tracked = yield* tabs.has(tabId);
         if (!tracked) return;
-        yield* logger.debug("Tab closed:", tabId);
         yield* tabs.detach(tabId, false);
       }),
     );
@@ -168,7 +157,6 @@ export default defineBackground(() => {
     Effect.gen(function* () {
       const connection = yield* Connection;
       const router = yield* CDPRouter;
-      const logger = yield* Logger;
 
       const processEvents = Stream.runForEach(connection.events, (event) =>
         event._tag === "Disconnected"
@@ -187,7 +175,6 @@ export default defineBackground(() => {
             try {
               response.result = yield* router.handleCommand(message);
             } catch (error) {
-              yield* logger.debug("Error handling command:", error);
               response.error = (error as Error).message;
             }
             yield* connection.send(response);
@@ -202,15 +189,11 @@ export default defineBackground(() => {
   // Reset any stale debugger connections on startup
   runFork(
     Effect.gen(function* () {
-      const logger = yield* Logger;
       const targets = yield* Effect.tryPromise(() =>
         chrome.debugger.getTargets(),
       );
       const attached = targets.filter((t) => t.tabId && t.attached);
       if (attached.length > 0) {
-        yield* logger.log(
-          `Detaching ${attached.length} stale debugger connections`,
-        );
         for (const target of attached) {
           yield* Effect.tryPromise(() =>
             chrome.debugger.detach({ tabId: target.tabId }),
@@ -222,9 +205,6 @@ export default defineBackground(() => {
 
   runFork(
     Effect.gen(function* () {
-      const logger = yield* Logger;
-      yield* logger.log("Extension initialized");
-
       const state = yield* StateStore;
       const connection = yield* Connection;
       const current = yield* state.get;

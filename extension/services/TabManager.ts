@@ -5,7 +5,6 @@
 import { Context, Effect, Layer, Ref } from "effect";
 import type { TabInfo, TargetInfo } from "../utils/types";
 import { Connection } from "./ConnectionManager";
-import { Logger } from "./Logger";
 
 export interface TabRegistry {
   get: (tabId: number) => Effect.Effect<TabInfo | undefined, unknown>;
@@ -28,7 +27,6 @@ export const TabRegistry = Context.GenericTag<TabRegistry>("vibe/TabRegistry");
 export const TabRegistryLive = Layer.effect(
   TabRegistry,
   Effect.gen(function* () {
-    const logger = yield* Logger;
     const connection = yield* Connection;
 
     const tabsRef = yield* Ref.make<ReadonlyMap<number, TabInfo>>(new Map());
@@ -60,8 +58,6 @@ export const TabRegistryLive = Layer.effect(
     const attach: TabRegistry["attach"] = (tabId) =>
       Effect.gen(function* () {
         const debuggee = { tabId };
-        yield* logger.debug("Attaching debugger to tab:", tabId);
-
         yield* Effect.tryPromise(() => chrome.debugger.attach(debuggee, "1.3"));
 
         const result = (yield* Effect.tryPromise(() =>
@@ -85,15 +81,6 @@ export const TabRegistryLive = Layer.effect(
             },
           },
         });
-
-        yield* logger.log(
-          "Tab attached:",
-          tabId,
-          "targetId:",
-          targetInfo.targetId,
-          "url:",
-          targetInfo.url,
-        );
         return { targetInfo };
       });
 
@@ -102,8 +89,6 @@ export const TabRegistryLive = Layer.effect(
         const tabs = yield* Ref.get(tabsRef);
         const tab = tabs.get(tabId);
         if (!tab) return;
-
-        yield* logger.debug("Detaching tab:", tabId);
 
         yield* connection.send({
           method: "forwardCDPEvent",
@@ -119,11 +104,7 @@ export const TabRegistryLive = Layer.effect(
         if (shouldDetachDebugger) {
           yield* Effect.tryPromise(() =>
             chrome.debugger.detach({ tabId }),
-          ).pipe(
-            Effect.catchAll((err) =>
-              logger.debug("Error detaching debugger:", err),
-            ),
-          );
+          ).pipe(Effect.catchAll(() => Effect.void));
         }
       });
 
