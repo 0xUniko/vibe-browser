@@ -4,6 +4,7 @@
 
 export interface ExtensionCommandMessage {
   id: number;
+  method: "cdp" | "tab";
   params: {
     method: string;
     params?: Record<string, unknown>;
