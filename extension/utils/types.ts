@@ -12,7 +12,6 @@ export type ConnectionState =
 export type TabState = "connecting" | "connected" | "error";
 
 export interface TabInfo {
-  sessionId?: string;
   targetId?: string;
   state: TabState;
   errorText?: string;
@@ -28,11 +27,11 @@ export interface ExtensionState {
 // Messages from relay to extension
 export interface ExtensionCommandMessage {
   id: number;
-  method: "forwardCDPCommand";
+  // method: "forwardCDPCommand";
   params: {
     method: string;
     params?: Record<string, unknown>;
-    sessionId?: string;
+    targetId?: string;
   };
 }
 
@@ -49,7 +48,7 @@ export interface ExtensionEventMessage {
   params: {
     method: string;
     params?: Record<string, unknown>;
-    sessionId?: string;
+    targetId?: string;
   };
 }
 

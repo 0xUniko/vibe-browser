@@ -3,7 +3,7 @@
  */
 
 import { Context, Effect, Layer, Ref } from "effect";
-import type { ExtensionCommandMessage, TabInfo } from "../utils/types";
+import type { ExtensionCommandMessage } from "../utils/types";
 import { Connection } from "./ConnectionManager";
 import { Logger } from "./Logger";
 import { TabRegistry } from "./TabManager";
@@ -66,51 +66,22 @@ export const CDPRouterLive = Layer.effect(
         return groupId;
       });
 
+    const resolveTabIdFromTargetId = (targetId: string) =>
+      listChromeTargets.pipe(
+        Effect.map(
+          (targets) =>
+            targets.find((t) => t.id === targetId)?.tabId as number | undefined,
+        ),
+      );
+
     const handleCommand: CDPRouter["handleCommand"] = (msg) =>
       Effect.gen(function* () {
-        if (msg.method !== "forwardCDPCommand") return undefined;
+        // if (msg.method !== "forwardCDPCommand") return undefined;
 
-        let targetTabId: number | undefined;
-        let targetTab: TabInfo | undefined;
-
-        if (msg.params.sessionId) {
-          const found = yield* tabs.getBySessionId(msg.params.sessionId);
-          if (found) {
-            targetTabId = found.tabId;
-            targetTab = found.tab;
-          }
-        }
-
-        if (!targetTab && msg.params.sessionId) {
-          const parentTabId = yield* tabs.getParentTabId(msg.params.sessionId);
-          if (parentTabId) {
-            targetTabId = parentTabId;
-            targetTab = yield* tabs.get(parentTabId);
-            yield* logger.debug(
-              "Found parent tab for child session:",
-              msg.params.sessionId,
-              "tabId:",
-              parentTabId,
-            );
-          }
-        }
-
-        if (
-          !targetTab &&
-          msg.params.params &&
-          typeof msg.params.params === "object" &&
-          "targetId" in msg.params.params
-        ) {
-          const found = yield* tabs.getByTargetId(
-            msg.params.params.targetId as string,
-          );
-          if (found) {
-            targetTabId = found.tabId;
-            targetTab = found.tab;
-          }
-        }
-
-        const debuggee = targetTabId ? { tabId: targetTabId } : undefined;
+        const targetId = msg.params.targetId;
+        const debuggee: chrome.debugger.DebuggerSession | undefined = targetId
+          ? { targetId }
+          : undefined;
 
         switch (msg.params.method) {
           case "VibeBrowser.listTabs": {
@@ -130,21 +101,34 @@ export const CDPRouterLive = Layer.effect(
           }
 
           case "VibeBrowser.attachTab": {
-            const tabId =
-              (msg.params.params?.tabId as number | undefined) ?? undefined;
-            if (!tabId || typeof tabId !== "number") {
+            const params = msg.params.params;
+            const tabId = (params?.tabId as number | undefined) ?? undefined;
+
+            if (typeof tabId === "number") {
+              const { targetInfo } = yield* tabs.attach(tabId);
+              return { targetId: targetInfo.targetId };
+            }
+
+            if (!targetId) {
               throw new Error(
-                "VibeBrowser.attachTab requires params.tabId (number)",
+                "VibeBrowser.attachTab requires msg.params.targetId (string) or params.tabId (number)",
               );
             }
 
-            const existing = yield* tabs.get(tabId);
-            if (existing?.sessionId) {
-              return { sessionId: existing.sessionId };
+            const maybeTabId = yield* resolveTabIdFromTargetId(targetId);
+            if (typeof maybeTabId === "number") {
+              const { targetInfo } = yield* tabs.attach(maybeTabId);
+              return { targetId: targetInfo.targetId };
             }
 
-            const { sessionId } = yield* tabs.attach(tabId);
-            return { sessionId };
+            yield* logger.debug(
+              "Attaching debugger to non-tab target:",
+              targetId,
+            );
+            yield* Effect.tryPromise(() =>
+              chrome.debugger.attach({ targetId }, "1.3"),
+            );
+            return { targetId };
           }
 
           case "Target.getTargets": {
@@ -163,17 +147,16 @@ export const CDPRouterLive = Layer.effect(
           }
 
           case "Target.getTargetInfo": {
-            const requestedTargetId = msg.params.params?.targetId as
-              | string
-              | undefined;
-            if (!requestedTargetId) {
-              throw new Error("Target.getTargetInfo requires params.targetId");
+            if (!targetId) {
+              throw new Error(
+                "Target.getTargetInfo requires msg.params.targetId",
+              );
             }
 
             const targets = yield* listChromeTargets;
-            const found = targets.find((t) => t.id === requestedTargetId);
+            const found = targets.find((t) => t.id === targetId);
             if (!found) {
-              throw new Error(`Target not found: ${requestedTargetId}`);
+              throw new Error(`Target not found: ${targetId}`);
             }
 
             return {
@@ -188,33 +171,32 @@ export const CDPRouterLive = Layer.effect(
           }
 
           case "Target.attachToTarget": {
-            const targetId = msg.params.params?.targetId as string | undefined;
             if (!targetId) {
-              throw new Error("Target.attachToTarget requires params.targetId");
-            }
-
-            const tracked = yield* tabs.getByTargetId(targetId);
-            if (tracked?.tab.sessionId) {
-              return { sessionId: tracked.tab.sessionId };
-            }
-
-            const targets = yield* listChromeTargets;
-            const found = targets.find((t) => t.id === targetId);
-            const tabId = found?.tabId;
-            if (!tabId || typeof tabId !== "number") {
               throw new Error(
-                `Target ${targetId} is not a tab target (no tabId)`,
+                "Target.attachToTarget requires msg.params.targetId",
               );
             }
 
-            const { sessionId } = yield* tabs.attach(tabId);
-            return { sessionId };
+            const maybeTabId = yield* resolveTabIdFromTargetId(targetId);
+            if (typeof maybeTabId === "number") {
+              const { targetInfo } = yield* tabs.attach(maybeTabId);
+              return { targetId: targetInfo.targetId };
+            }
+
+            yield* logger.debug(
+              "Attaching debugger to non-tab target:",
+              targetId,
+            );
+            yield* Effect.tryPromise(() =>
+              chrome.debugger.attach({ targetId }, "1.3"),
+            );
+            return { targetId };
           }
 
           case "Runtime.enable": {
             if (!debuggee) {
               throw new Error(
-                `No debuggee found for Runtime.enable (sessionId: ${msg.params.sessionId})`,
+                `No debuggee found for Runtime.enable (targetId: ${targetId})`,
               );
             }
             yield* Effect.tryPromise(() =>
@@ -249,54 +231,44 @@ export const CDPRouterLive = Layer.effect(
           }
 
           case "Target.closeTarget": {
-            if (!targetTabId) {
-              yield* logger.log(
-                `Target not found: ${msg.params.params?.targetId}`,
-              );
-              return { success: false };
+            if (!targetId) {
+              throw new Error("Target.closeTarget requires targetId");
             }
-            yield* Effect.tryPromise(() => chrome.tabs.remove(targetTabId));
+            const tabId = yield* resolveTabIdFromTargetId(targetId);
+            if (!tabId) return { success: false };
+            yield* Effect.tryPromise(() => chrome.tabs.remove(tabId));
             return { success: true };
           }
 
           case "Target.activateTarget": {
-            if (!targetTabId) {
-              yield* logger.log(
-                `Target not found for activation: ${msg.params.params?.targetId}`,
-              );
-              return {};
+            if (!targetId) {
+              throw new Error("Target.activateTarget requires targetId");
             }
+            const tabId = yield* resolveTabIdFromTargetId(targetId);
+            if (!tabId) return {};
             yield* Effect.tryPromise(() =>
-              chrome.tabs.update(targetTabId, { active: true }),
+              chrome.tabs.update(tabId, { active: true }),
             );
             return {};
           }
         }
 
-        if (!debuggee || !targetTab) {
+        if (!debuggee) {
           throw new Error(
-            `No tab found for method ${msg.params.method} sessionId: ${msg.params.sessionId}`,
+            `No targetId found for method ${msg.params.method} (expected msg.params.targetId)`,
           );
         }
 
         yield* logger.debug(
           "CDP command:",
           msg.params.method,
-          "for tab:",
-          targetTabId,
+          "for targetId:",
+          targetId,
         );
-
-        const debuggerSession: chrome.debugger.DebuggerSession = {
-          ...debuggee,
-          sessionId:
-            msg.params.sessionId !== targetTab.sessionId
-              ? msg.params.sessionId
-              : undefined,
-        };
 
         return yield* Effect.tryPromise(() =>
           chrome.debugger.sendCommand(
-            debuggerSession,
+            debuggee,
             msg.params.method,
             msg.params.params,
           ),
@@ -310,39 +282,20 @@ export const CDPRouterLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         const tab = source.tabId ? yield* tabs.get(source.tabId) : undefined;
-        if (!tab) return;
+        const effectiveTargetId = source.targetId ?? tab?.targetId;
+        if (!effectiveTargetId) return;
 
         yield* logger.debug(
           "Forwarding CDP event:",
           method,
-          "from tab:",
-          source.tabId,
+          "from targetId:",
+          effectiveTargetId,
         );
-
-        if (
-          method === "Target.attachedToTarget" &&
-          params &&
-          typeof params === "object" &&
-          "sessionId" in params
-        ) {
-          const sessionId = (params as { sessionId: string }).sessionId;
-          yield* tabs.trackChildSession(sessionId, source.tabId!);
-        }
-
-        if (
-          method === "Target.detachedFromTarget" &&
-          params &&
-          typeof params === "object" &&
-          "sessionId" in params
-        ) {
-          const sessionId = (params as { sessionId: string }).sessionId;
-          yield* tabs.untrackChildSession(sessionId);
-        }
 
         yield* connection.send({
           method: "forwardCDPEvent",
           params: {
-            sessionId: source.sessionId || tab.sessionId,
+            targetId: effectiveTargetId,
             method,
             params,
           },

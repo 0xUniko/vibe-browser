@@ -11,23 +11,10 @@ export interface TabRegistry {
   get: (tabId: number) => Effect.Effect<TabInfo | undefined, unknown>;
   has: (tabId: number) => Effect.Effect<boolean, unknown>;
   set: (tabId: number, info: TabInfo) => Effect.Effect<void, unknown>;
-  getBySessionId: (
-    sessionId: string,
-  ) => Effect.Effect<{ tabId: number; tab: TabInfo } | undefined, unknown>;
   getByTargetId: (
     targetId: string,
   ) => Effect.Effect<{ tabId: number; tab: TabInfo } | undefined, unknown>;
-  getParentTabId: (
-    sessionId: string,
-  ) => Effect.Effect<number | undefined, unknown>;
-  trackChildSession: (
-    sessionId: string,
-    parentTabId: number,
-  ) => Effect.Effect<void, unknown>;
-  untrackChildSession: (sessionId: string) => Effect.Effect<void, unknown>;
-  attach: (
-    tabId: number,
-  ) => Effect.Effect<{ targetInfo: TargetInfo; sessionId: string }, unknown>;
+  attach: (tabId: number) => Effect.Effect<{ targetInfo: TargetInfo }, unknown>;
   detach: (
     tabId: number,
     shouldDetachDebugger: boolean,
@@ -45,10 +32,6 @@ export const TabRegistryLive = Layer.effect(
     const connection = yield* Connection;
 
     const tabsRef = yield* Ref.make<ReadonlyMap<number, TabInfo>>(new Map());
-    const childSessionsRef = yield* Ref.make<ReadonlyMap<string, number>>(
-      new Map(),
-    );
-    const nextSessionIdRef = yield* Ref.make(1);
 
     const setTab = (tabId: number, info: TabInfo) =>
       Ref.update(tabsRef, (tabs) => {
@@ -63,25 +46,6 @@ export const TabRegistryLive = Layer.effect(
         next.delete(tabId);
         return next;
       });
-
-    const deleteChildSessionsForTab = (tabId: number) =>
-      Ref.update(childSessionsRef, (child) => {
-        const next = new Map(child);
-        for (const [childSessionId, parentTabId] of next) {
-          if (parentTabId === tabId) next.delete(childSessionId);
-        }
-        return next;
-      });
-
-    const getBySessionId: TabRegistry["getBySessionId"] = (sessionId) =>
-      Ref.get(tabsRef).pipe(
-        Effect.map((tabs) => {
-          for (const [tabId, tab] of tabs) {
-            if (tab.sessionId === sessionId) return { tabId, tab };
-          }
-          return undefined;
-        }),
-      );
 
     const getByTargetId: TabRegistry["getByTargetId"] = (targetId) =>
       Ref.get(tabsRef).pipe(
@@ -105,13 +69,7 @@ export const TabRegistryLive = Layer.effect(
         )) as { targetInfo: TargetInfo };
 
         const targetInfo = result.targetInfo;
-        const nextSessionId = yield* Ref.get(nextSessionIdRef);
-        yield* Ref.set(nextSessionIdRef, nextSessionId + 1);
-
-        const sessionId = `pw-tab-${nextSessionId}`;
-
         yield* setTab(tabId, {
-          sessionId,
           targetId: targetInfo.targetId,
           state: "connected",
         });
@@ -119,9 +77,9 @@ export const TabRegistryLive = Layer.effect(
         yield* connection.send({
           method: "forwardCDPEvent",
           params: {
+            targetId: targetInfo.targetId,
             method: "Target.attachedToTarget",
             params: {
-              sessionId,
               targetInfo: { ...targetInfo, attached: true },
               waitingForDebugger: false,
             },
@@ -131,12 +89,12 @@ export const TabRegistryLive = Layer.effect(
         yield* logger.log(
           "Tab attached:",
           tabId,
-          "sessionId:",
-          sessionId,
+          "targetId:",
+          targetInfo.targetId,
           "url:",
           targetInfo.url,
         );
-        return { targetInfo, sessionId };
+        return { targetInfo };
       });
 
     const detach: TabRegistry["detach"] = (tabId, shouldDetachDebugger) =>
@@ -151,12 +109,12 @@ export const TabRegistryLive = Layer.effect(
           method: "forwardCDPEvent",
           params: {
             method: "Target.detachedFromTarget",
-            params: { sessionId: tab.sessionId, targetId: tab.targetId },
+            targetId: tab.targetId,
+            params: { targetId: tab.targetId },
           },
         });
 
         yield* deleteTab(tabId);
-        yield* deleteChildSessionsForTab(tabId);
 
         if (shouldDetachDebugger) {
           yield* Effect.tryPromise(() =>
@@ -179,11 +137,10 @@ export const TabRegistryLive = Layer.effect(
           method: "forwardCDPEvent",
           params: {
             method: "Target.detachedFromTarget",
-            params: { sessionId: tab.sessionId, targetId: tab.targetId },
+            targetId: tab.targetId,
+            params: { targetId: tab.targetId },
           },
         });
-
-        yield* deleteChildSessionsForTab(tabId);
         yield* deleteTab(tabId);
       });
 
@@ -195,7 +152,6 @@ export const TabRegistryLive = Layer.effect(
         );
       }
       yield* Ref.set(tabsRef, new Map());
-      yield* Ref.set(childSessionsRef, new Map());
     });
 
     return {
@@ -204,32 +160,7 @@ export const TabRegistryLive = Layer.effect(
       has: (tabId) =>
         Ref.get(tabsRef).pipe(Effect.map((tabs) => tabs.has(tabId))),
       set: setTab,
-      getBySessionId,
       getByTargetId,
-      getParentTabId: (sessionId) =>
-        Ref.get(childSessionsRef).pipe(Effect.map((m) => m.get(sessionId))),
-      trackChildSession: (sessionId, parentTabId) =>
-        logger
-          .debug("Child target attached:", sessionId, "for tab:", parentTabId)
-          .pipe(
-            Effect.zipRight(
-              Ref.update(childSessionsRef, (m) => {
-                const next = new Map(m);
-                next.set(sessionId, parentTabId);
-                return next;
-              }),
-            ),
-          ),
-      untrackChildSession: (sessionId) =>
-        logger.debug("Child target detached:", sessionId).pipe(
-          Effect.zipRight(
-            Ref.update(childSessionsRef, (m) => {
-              const next = new Map(m);
-              next.delete(sessionId);
-              return next;
-            }),
-          ),
-        ),
       attach,
       detach,
       handleDebuggerDetach,
