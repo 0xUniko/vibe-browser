@@ -34,18 +34,18 @@ Treat this skill as a local message bus between “AI ↔ browser extension”. 
 
 1) Start the relay (this skill).
 2) Ensure the extension is loaded and connected (the relay console will log connections; you can also check `/healthz` and WS status).
-3) Have your AI/script connect as a client: `ws://localhost:9222/client`.
+3) Have your AI/script send commands via HTTP: `POST http://localhost:9222/command`.
 4) Use `tab` to fetch the active page’s `targetId`.
 5) Use `cdp` to call CDP methods (e.g. `Runtime.evaluate`, `Page.navigate`, `DOM.getDocument`) with that `targetId`.
 
 There are only two key rules:
 
-- Every request must include a numeric `id`; the response will carry the same `id`.
 - Most `cdp` calls require a valid `targetId` (fetch it first).
+- For the HTTP `/command` endpoint, the server assigns its own internal correlation `id` (you don’t need to provide one).
 
 ## Minimal protocol reference (condensed)
 
-### What you send to the relay (WS `/client`)
+### What you send to the relay (HTTP `POST /command`)
 
 Pick either format:
 
@@ -61,13 +61,18 @@ Pick either format:
 { type: "command", id?: number, method: "tab" | "cdp", params: object }
 ```
 
-Also supported: `{ type: "ping" }` → `{ type: "pong" }`.
+Notes:
+
+- Any provided `id` is ignored for HTTP requests; the relay will generate a fresh one internally.
+- `{ type: "ping" }` is supported for compatibility, but it’s only useful for WebSocket-style clients.
 
 ### What you receive
 
-- Response: `{ id, result?, error? }`
-- Forwarded CDP event: `{ method: "forwardCDPEvent", params: { method, params?, targetId? } }`
-- Log: `{ method: "log", params: { level, args } }`
+- HTTP response (from `POST /command`): `{ ok: boolean, result: any | null, error: string | null }`
+- SSE stream (from `GET /events`): JSON messages such as:
+  - `{ type: "status", extensionConnected: boolean }`
+  - `{ method: "forwardCDPEvent", params: { method, params?, targetId? } }`
+  - `{ method: "log", params: { level, args } }`
 
 ## Example: get targetId, then evaluate
 
@@ -76,40 +81,43 @@ Short Bun client example (you can ask AI to generate more complex scripts follow
 ```ts
 // tmp-client.ts (run: bun tmp-client.ts)
 
-const ws = new WebSocket("ws://localhost:9222/client");
+type CommandBody =
+    | {
+            method: "tab" | "cdp";
+            params: { method: string; params?: Record<string, unknown>; targetId?: string };
+        }
+    | {
+            type: "command";
+            id?: number;
+            method: "tab" | "cdp";
+            params: Record<string, unknown>;
+        };
 
-let nextId = 1;
-const pending = new Map<number, (msg: any) => void>();
-
-ws.onmessage = (ev) => {
-    const msg = JSON.parse(String(ev.data));
-    if (typeof msg?.id === "number" && pending.has(msg.id)) {
-        pending.get(msg.id)!(msg);
-        pending.delete(msg.id);
-        return;
-    }
-    console.log("event/log:", msg);
+const call = async (body: CommandBody) => {
+    const res = await fetch("http://localhost:9222/command", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+    });
+    return (await res.json()) as { ok: boolean; result: any; error: string | null };
 };
 
-const call = (method: "tab" | "cdp", params: any) =>
-    new Promise<any>((resolve) => {
-        const id = nextId++;
-        pending.set(id, resolve);
-        ws.send(JSON.stringify({ id, method, params }));
-    });
+const active = await call({
+    method: "tab",
+    params: { method: "tab.getActiveTarget" },
+});
+const targetId = active?.result?.targetId;
+console.log("active targetId:", targetId);
 
-ws.onopen = async () => {
-    const active = await call("tab", { method: "tab.getActiveTarget" });
-    const targetId = active?.result?.targetId;
-    console.log("active targetId:", targetId);
-
-    const res = await call("cdp", {
+const evaluated = await call({
+    method: "cdp",
+    params: {
         method: "Runtime.evaluate",
         targetId,
         params: { expression: "1 + 2" },
-    });
-    console.log("evaluate:", res);
-};
+    },
+});
+console.log("evaluate:", evaluated);
 ```
 
 ## Troubleshooting (for users/AI)
