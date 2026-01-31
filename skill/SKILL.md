@@ -40,7 +40,8 @@ Treat this skill as a local message bus between “AI ↔ browser extension”. 
 
 There are only two key rules:
 
-- Most `cdp` calls require a valid `targetId` (fetch it first).
+- Most `cdp` calls require a valid `targetId` (fetch it first via `tab.getActiveTarget` or list all via `Target.getTargets`).
+- `Target.getTargets` is special—it doesn't need a `targetId` and returns all browser targets.
 - For the HTTP `/command` endpoint, the server assigns its own internal correlation `id` (you don’t need to provide one).
 
 ## Minimal protocol reference (condensed)
@@ -102,6 +103,14 @@ const call = async (body: CommandBody) => {
     return (await res.json()) as { ok: boolean; result: any; error: string | null };
 };
 
+// Example 1: List all browser targets (no targetId needed)
+const targets = await call({
+    method: "cdp",
+    params: { method: "Target.getTargets" },
+});
+console.log("all targets:", targets.result?.targetInfos?.length);
+
+// Example 2: Get active tab's target
 const active = await call({
     method: "tab",
     params: { method: "tab.getActiveTarget" },
@@ -109,6 +118,7 @@ const active = await call({
 const targetId = active?.result?.targetId;
 console.log("active targetId:", targetId);
 
+// Example 3: Evaluate JS in the active tab (requires targetId)
 const evaluated = await call({
     method: "cdp",
     params: {

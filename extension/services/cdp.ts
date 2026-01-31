@@ -30,23 +30,33 @@ export const CDPLive = Layer.effect(
       Effect.gen(function* () {
         if (msg.method !== "cdp") return undefined;
 
-        const targetId = msg.params.targetId;
-        const debuggee: chrome.debugger.DebuggerSession | undefined = targetId
-          ? { targetId }
-          : undefined;
+        const method = msg.params.method;
 
-        if (!debuggee) {
-          throw new Error(
-            `No targetId found for method ${msg.params.method} (expected msg.params.targetId)`,
+        // Target.getTargets - Chrome provides a dedicated API for this
+        if (method === "Target.getTargets") {
+          const targets = yield* Effect.tryPromise(() =>
+            chrome.debugger.getTargets(),
           );
+          return {
+            targetInfos: targets.map((t) => ({
+              targetId: t.id,
+              type: t.type,
+              title: t.title,
+              url: t.url,
+              attached: t.attached,
+            })),
+          };
         }
 
+        const targetId = msg.params.targetId;
+        if (!targetId) {
+          throw new Error(`No targetId provided for method ${method}`);
+        }
+
+        const debuggee: chrome.debugger.DebuggerSession = { targetId };
+
         return yield* Effect.tryPromise(() =>
-          chrome.debugger.sendCommand(
-            debuggee,
-            msg.params.method,
-            msg.params.params,
-          ),
+          chrome.debugger.sendCommand(debuggee, method, msg.params.params),
         );
       });
 
