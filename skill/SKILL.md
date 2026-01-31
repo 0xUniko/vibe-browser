@@ -126,6 +126,7 @@ console.log("evaluate:", evaluated);
 - No responses: ensure every command includes an `id`, and you are awaiting the response with that exact `id`.
 - CDP errors: most often the `targetId` is missing/incorrect—fetch it first via `tab.getActiveTarget`.
 - Port in use: change `SKILL_PORT`, and ensure the extension-side connection address matches (default is `9222`).
+- Request timeout (15s): if a command triggers long-running browser work, the request will be cut off and the extension can become blocked. Avoid this by splitting work into smaller commands and keeping each CDP call fast; prefer polling/steps over a single heavy operation.
 
 ## Configuration (environment variables)
 
