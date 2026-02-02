@@ -30,11 +30,10 @@ You can verify it is up with a browser or curl:
 
 Treat this skill as a local message bus between “AI ↔ browser extension”. Typical flow:
 
-1) Start the relay (this skill).
-2) Ensure the extension is loaded and connected (the relay console will log connections; you can also check `/healthz` and WS status).
-3) Have your AI/script send commands via HTTP: `POST http://localhost:9222/command`.
-4) Use `tab` to fetch the active page’s `targetId`.
-5) Use `cdp` to call CDP methods (e.g. `Runtime.evaluate`, `Page.navigate`, `DOM.getDocument`) with that `targetId`.
+1) Ensure the extension is loaded and connected (you can also check `/healthz` and WS status).
+2) Have your AI/script send commands via HTTP: `POST http://localhost:9222/command`.
+3) Use `tab` to fetch the active page’s `targetId`.
+4) Use `cdp` to call CDP methods (e.g. `Runtime.evaluate`, `Page.navigate`, `DOM.getDocument`) with that `targetId`.
 
 There are only two key rules:
 
@@ -135,6 +134,7 @@ console.log("evaluate:", evaluated);
 - CDP errors: most often the `targetId` is missing/incorrect—fetch it first via `tab.getActiveTarget`.
 - Port in use: change `SKILL_PORT`, and ensure the extension-side connection address matches (default is `9222`).
 - Request timeout (15s): if a command triggers long-running browser work, the request will be cut off and the extension can become blocked. Avoid this by splitting work into smaller commands and keeping each CDP call fast; prefer polling/steps over a single heavy operation.
+- Request timeout keeps occurring: it might be that the extension has been blocked. You should stop the operation and prompt the user to manually refresh the browser extension, then analyze the previous operations to summarize the cause of the blocking and avoid it in the future.
 
 ## Configuration (environment variables)
 
