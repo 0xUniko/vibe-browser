@@ -80,7 +80,7 @@ Connected to relay
 
 ---
 
-### 为你的项目注入skill
+### 为你的项目添加skill
 
 将`skill\SKILL.md`放入合适的地方让本地ai能够使用
 

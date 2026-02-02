@@ -80,7 +80,7 @@ Connected to relay
 
 ---
 
-## Inject the Skill into Your Project
+## Add the Skill into Your Project
 
 Place `skill/SKILL.md` in the appropriate location so your local AI can use it.
 
