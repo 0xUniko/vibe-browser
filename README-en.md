@@ -25,21 +25,6 @@ The project does not use Playwright. It is implemented directly on top of the Ch
 
 ---
 
-## Architecture
-
-- `extension/`  
-  Chromium extension (WXT + TypeScript + effect)  
-  Responsible for CDP control, tab routing, and event forwarding
-
-- `skill/`  
-  Local relay service (HTTP + WebSocket + SSE)  
-  Connects your tools / scripts / AI with the extension
-
-- `scripts/`  
-  One-click installation scripts for injecting the skill into OpenCode / Claude Code
-
----
-
 ## Quick Start
 
 ### 1. Build the Extension
@@ -107,6 +92,21 @@ Run in your target project root (where you execute `opencode`):
 ```bash
 curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-opencode-skill.sh | bash
 ```
+
+---
+
+## Architecture
+
+- `extension/`  
+  Chromium extension (WXT + TypeScript + effect)  
+  Responsible for CDP control, tab routing, and event forwarding
+
+- `skill/`  
+  Local relay service (HTTP + WebSocket + SSE)  
+  Connects your tools / scripts / AI with the extension
+
+- `scripts/`  
+  One-click installation scripts for injecting the skill into OpenCode / Claude Code
 
 ---
 

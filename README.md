@@ -25,21 +25,6 @@
 
 ---
 
-## 技术架构
-
-- `extension/`  
-  Chromium 扩展（WXT + TypeScript + effect）  
-  负责 CDP 控制、Tab 路由和事件转发
-
-- `skill/`  
-  本地 Relay 服务（HTTP + WebSocket + SSE）  
-  连接你的工具 / 脚本 / AI 与扩展
-
-- `scripts/`  
-  一键安装脚本，用于向 OpenCode / Claude Code 注入 skill
-
----
-
 ## 快速开始
 
 ### 1. 构建扩展
@@ -107,6 +92,21 @@ irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-opencode-skill.sh | bash
 ```
+
+---
+
+## 技术架构
+
+- `extension/`  
+  Chromium 扩展（WXT + TypeScript + effect）  
+  负责 CDP 控制、Tab 路由和事件转发
+
+- `skill/`  
+  本地 Relay 服务（HTTP + WebSocket + SSE）  
+  连接你的工具 / 脚本 / AI 与扩展
+
+- `scripts/`  
+  一键安装脚本，用于向 OpenCode / Claude Code 注入 skill
 
 ---
 
