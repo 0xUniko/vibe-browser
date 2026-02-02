@@ -1,3 +1,8 @@
+---
+name: vibe-browser
+description: Connect Claude (or any local agent) to your real browser via the Vibe relay (HTTP + WS + SSE) and a Chromium extension (Tab API + CDP).
+---
+
 # Vibe Skill (Local Relay Server)
 
 This `skill` is a **Bun-only** local relay server. It forwards messages produced/consumed by the browser extension (`extension/`) to your local tools/scripts/AI agents, and forwards your commands back to the extension so it can control the browser (Tab APIs + CDP).
@@ -11,14 +16,7 @@ So the skill must expose HTTP + WS locally (default port `9222`).
 
 ## Quick start
 
-From the `skill/` directory:
-
-```bash
-bun install
-bun run relay.ts
-```
-
-Or directly:
+From the directory containing `relay.ts` (this folder):
 
 ```bash
 bun relay.ts
@@ -146,4 +144,4 @@ console.log("evaluate:", evaluated);
 
 ## Code location
 
-- Implementation: [skill/relay.ts](skill/relay.ts)
+- Implementation: [relay.ts](relay.ts)

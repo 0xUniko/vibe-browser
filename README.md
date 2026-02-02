@@ -36,6 +36,19 @@ bun run build
 
 或者使用快速设置脚本：
 
+#### Claude Code
+
+在你的目标项目根目录执行（会安装到 `.claude/skills/vibe-browser/`，然后可以用 `/<skill>` 调用）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-claude-code-skill.sh | bash
+```
+
+PowerShell（Windows）：
+
+```powershell
+irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-claude-code-skill.ps1 | iex
+
 #### opencode
 
 在你的目标项目根目录（运行 `opencode` 的目录）执行：
