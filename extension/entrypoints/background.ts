@@ -7,7 +7,10 @@
 import { Effect, Layer, ManagedRuntime, Stream } from "effect";
 import { CDP, CDPLive } from "../services/cdp";
 import { Connection, ConnectionLive } from "../services/ConnectionManager";
-import type { ExtensionResponseMessage } from "../services/RelayProtocol";
+import type {
+  ExtensionCommandMessage,
+  ExtensionResponseMessage,
+} from "../services/RelayProtocol";
 import { StateStore, StateStoreLive } from "../services/StateManager";
 import { TabRegistry, TabRegistryLive } from "../services/tab";
 import type { PopupMessage, StateResponse } from "./popup/messages";
@@ -179,32 +182,33 @@ export default defineBackground(() => {
           : Effect.void,
       );
 
-      const processMessages = Stream.runForEach(
-        connection.messages,
-        (message) =>
-          Effect.gen(function* () {
-            const effectResult =
-              message.method === "cdp"
-                ? cdp.handleCommand(message)
-                : tabs.handleCommand(message);
+      const handleMessage = (message: ExtensionCommandMessage) =>
+        Effect.gen(function* () {
+          const effectResult =
+            message.method === "cdp"
+              ? cdp.handleCommand(message)
+              : tabs.handleCommand(message);
 
-            const response = yield* effectResult.pipe(
-              Effect.map(
-                (result): ExtensionResponseMessage => ({
-                  id: message.id,
-                  result,
-                }),
-              ),
-              Effect.catchAll((error) =>
-                Effect.succeed<ExtensionResponseMessage>({
-                  id: message.id,
-                  error: errorToMessage(error),
-                }),
-              ),
-            );
+          const response = yield* effectResult.pipe(
+            Effect.map(
+              (result): ExtensionResponseMessage => ({
+                id: message.id,
+                result,
+              }),
+            ),
+            Effect.catchAll((error) =>
+              Effect.succeed<ExtensionResponseMessage>({
+                id: message.id,
+                error: errorToMessage(error),
+              }),
+            ),
+          );
 
-            yield* connection.send(response);
-          }).pipe(Effect.catchAll(() => Effect.void)),
+          yield* connection.send(response);
+        }).pipe(Effect.catchAll(() => Effect.void));
+
+      const processMessages = Stream.runForEach(connection.messages, (message) =>
+        Effect.forkDaemon(handleMessage(message)).pipe(Effect.asVoid),
       );
 
       yield* Effect.forkDaemon(processEvents);

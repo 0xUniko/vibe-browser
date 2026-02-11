@@ -25,7 +25,8 @@ bun relay.ts
 You can verify it is up with a browser or curl:
 
 - `GET http://localhost:9222/health` runs the full health check and returns JSON details.
-- A healthy result is `200`; unhealthy states return `503` (including disconnected extension or blocked browser extension).
+- A healthy result is `200`; unhealthy states return `503` (e.g. disconnected extension, or the extension failing a quick probe).
+- Note: `/health` is a best-effort reachability check. With concurrent command handling in the extension, a `200` does not guarantee there is no ongoing long-running browser work.
 
 ## How AI should use this (recommended workflow)
 
@@ -41,6 +42,7 @@ There are only two key rules:
 - Most `cdp` calls require a valid `targetId` (fetch it first via `tab.getActiveTarget` or list all via `Target.getTargets`).
 - `Target.getTargets` is special—it doesn't need a `targetId` and returns all browser targets.
 - For the HTTP `/command` endpoint, the server assigns its own internal correlation `id` (you don’t need to provide one).
+- Avoid issuing a single heavy/long-running operation. Prefer many small calls and wait for each response before sending the next one.
 
 ## Minimal protocol reference (condensed)
 
@@ -130,13 +132,18 @@ console.log("evaluate:", evaluated);
 
 ## Troubleshooting (for users/AI)
 
-- Extension not responding: run `GET /health` first. If it returns `503` with `browserBlocked: true`, stop issuing commands and manually refresh the browser extension, then retry.
+- Extension not responding: run `GET /health` first. If it returns `503`, stop issuing commands and manually refresh the browser extension, then retry.
 - Extension not responding (connection issue): if `GET /health` shows `extensionConnected: false`, confirm the extension is loaded and connected to `ws://localhost:9222/extension`.
-- No responses: ensure every command includes an `id`, and you are awaiting the response with that exact `id`.
+- No responses (HTTP): for `POST /command`, you do not need to include an `id` (the relay generates one).
+- No responses (WS client): ensure every command includes an `id`, and you await the response with that exact `id`.
 - CDP errors: most often the `targetId` is missing/incorrect—fetch it first via `tab.getActiveTarget`.
 - Port in use: change `SKILL_PORT`, and ensure the extension-side connection address matches (default is `9222`).
-- Request timeout (15s): if a command triggers long-running browser work, the request will be cut off and the extension can become blocked. Avoid this by splitting work into smaller commands and keeping each CDP call fast; prefer polling/steps over a single heavy operation.
-- Request timeout keeps occurring: treat this as a likely blocked extension. Stop the operation, ask the user to manually refresh the extension, then analyze prior operations and split heavy actions into smaller steps.
+- Request timeout (default 15s): the relay returns a timeout when the extension does not respond within `SKILL_REQUEST_TIMEOUT_MS`. This is usually caused by a command that triggered long-running browser work (a "heavy" operation). Avoid this by splitting work into smaller commands and keeping each CDP call fast; prefer polling/steps over a single heavy operation.
+- Why this happens (important): the extension now processes commands concurrently, so `GET /health` (or `tab.getActiveTarget`) is no longer a reliable "blocked or not" signal. A quick probe can succeed even while another long-running command is still executing or a specific target is jammed.
+- After a timeout: the original command may still complete in the extension and arrive late as an `orphan-response` on `GET /events`. This is a strong sign the operation was too heavy and should be decomposed.
+- Timeouts keep occurring: treat this as a likely blocked/unresponsive extension (service worker stuck, debugger pipeline jammed, or browser work saturated). Stop issuing commands and manually refresh the extension.
+- Manual refresh (Chrome): open `chrome://extensions`, find `vibe-browser`, click the reload icon (or toggle it off and on), then open the extension popup and switch it to **Active** again.
+- Manual refresh (Edge): open `edge://extensions` and do the same.
 
 ## Configuration (environment variables)
 

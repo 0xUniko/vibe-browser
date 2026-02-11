@@ -123,6 +123,12 @@ SKILL_HEALTH_PROBE_TIMEOUT_MS
 
 ---
 
+## Troubleshooting (Blocking / Timeouts)
+
+- Avoid a single heavy operation: split work into many small commands, and wait for each response before issuing the next one.
+- `GET /health` is a reachability / quick-probe signal. It does not guarantee there is no long-running work in flight or that the extension is not partially jammed.
+- If `POST /command` keeps timing out (default 15s), the extension is likely blocked/unresponsive due to heavy work or a congested debugger pipeline. Stop issuing commands and manually refresh the extension in the browser (`chrome://extensions` or `edge://extensions`, find `vibe-browser`, click reload), then switch it to **Active** again.
+
 ## TODO
 
 - Remove ID-related details from the documentation; internal IDs should not be exposed externally.
