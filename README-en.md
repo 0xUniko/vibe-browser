@@ -97,7 +97,7 @@ The installer only copies the minimal runtime set: `SKILL.md`, `relay.ts`, `get-
   Responsible for CDP control, tab routing, and event forwarding
 
 - `skill/`  
-  Local relay service (HTTP + WebSocket + SSE)  
+  Local relay service (public HTTP + SSE)  
   Connects your tools / scripts / AI with the extension
 
 - `scripts/`  
@@ -110,7 +110,6 @@ The installer only copies the minimal runtime set: `SKILL.md`, `relay.ts`, `get-
 - Health check: `GET /health`
 - Send command: `POST /command`
 - Event stream (SSE): `GET /events`
-- Extension connection (WS): `ws://localhost:9222/extension`
 
 Environment variables:
 
@@ -131,7 +130,6 @@ SKILL_HEALTH_PROBE_TIMEOUT_MS
 
 ## TODO
 
-- Remove ID-related details from the documentation; internal IDs should not be exposed externally.
 - Optimize architecture and implementation details to save tokens and reduce cognitive load on the model.
 
 ---

@@ -22,7 +22,7 @@ curl http://127.0.0.1:9222/health
 Utility scripts:
 
 ```bash
-# get active target id
+# get active target
 bun .agents/skills/vibe-browser/get-active-target.ts
 
 # record network events (HTTP + WS)

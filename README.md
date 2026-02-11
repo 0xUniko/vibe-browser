@@ -97,7 +97,7 @@ irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-
   负责 CDP 控制、Tab 路由和事件转发
 
 - `skill/`  
-  本地 Relay 服务（HTTP + WebSocket + SSE）  
+  本地 Relay 服务（对外 HTTP + SSE）  
   连接你的工具 / 脚本 / AI 与扩展
 
 - `scripts/`  
@@ -110,7 +110,6 @@ irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-
 - 健康检查：`GET /health`
 - 发送命令：`POST /command`
 - 事件流（SSE）：`GET /events`
-- 扩展连接（WS）：`ws://localhost:9222/extension`
 
 环境变量：
 
@@ -131,7 +130,6 @@ SKILL_HEALTH_PROBE_TIMEOUT_MS
 
 ## TODO
 
-- 清理文档里面关于id的内容，内部id不要对外暴露
 - 优化架构和实现细节，以节省token和降低对模型智力的要求
 
 ## License

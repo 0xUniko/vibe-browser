@@ -1,18 +1,13 @@
 ---
 name: vibe-browser
-description: Connect Claude (or any local agent) to your real browser via the Vibe relay (HTTP + WS + SSE) and a Chromium extension (Tab API + CDP).
+description: Connect Claude (or any local agent) to your real browser via the Vibe relay and a Chromium extension (Tab API + CDP).
 ---
 
 # Vibe Skill (Local Relay Server)
 
-This `skill` is a **Bun-only** local relay server. It forwards messages produced/consumed by the browser extension (`extension/`) to your local tools/scripts/AI agents, and forwards your commands back to the extension so it can control the browser (Tab APIs + CDP).
+This `skill` is a **Bun-only** local relay server. It forwards messages between the browser extension (`extension/`) and your local tools/scripts/AI agents so the browser can be controlled through Tab APIs + CDP.
 
-The extension connects proactively:
-
-- Health probe: `GET http://localhost:9222/health`
-- Extension WebSocket: `ws://localhost:9222/extension`
-
-So the skill must expose HTTP + WS locally (default port `9222`).
+For users/AI, treat this as an HTTP service (default port `9222`). Extension-side connection details are internal implementation details.
 
 ## Quick start
 
@@ -30,9 +25,9 @@ You can verify it is up with a browser or curl:
 
 ## How AI should use this (recommended workflow)
 
-Treat this skill as a local message bus between “AI ↔ browser extension”. Typical flow:
+Treat this skill as a local message bus between "AI ↔ browser extension". Typical flow:
 
-1) Ensure the extension is loaded and connected (check `GET /health` first, then WS status if needed).
+1) Ensure the extension is loaded and connected (check `GET /health` first).
 2) Have your AI/script send commands via HTTP: `POST http://localhost:9222/command`.
 3) Use `tab` to fetch the active page’s `targetId`.
 4) Use `cdp` to call CDP methods (e.g. `Runtime.evaluate`, `Page.navigate`, `DOM.getDocument`) with that `targetId`.
@@ -41,31 +36,17 @@ There are only two key rules:
 
 - Most `cdp` calls require a valid `targetId` (fetch it first via `tab.getActiveTarget` or list all via `Target.getTargets`).
 - `Target.getTargets` is special—it doesn't need a `targetId` and returns all browser targets.
-- For the HTTP `/command` endpoint, the server assigns its own internal correlation `id` (you don’t need to provide one).
 - Avoid issuing a single heavy/long-running operation. Prefer many small calls and wait for each response before sending the next one.
 
 ## Minimal protocol reference (condensed)
 
 ### What you send to the relay (HTTP `POST /command`)
 
-Pick either format:
-
-1) Direct command (recommended)
+Use this command shape:
 
 ```ts
-{ id: number, method: "tab" | "cdp", params: { method: string, params?: object, targetId?: string } }
+{ method: "tab" | "cdp", params: { method: string, params?: object, targetId?: string } }
 ```
-
-1) Envelope (use when you want the relay to auto-assign `id`)
-
-```ts
-{ type: "command", id?: number, method: "tab" | "cdp", params: object }
-```
-
-Notes:
-
-- Any provided `id` is ignored for HTTP requests; the relay will generate a fresh one internally.
-- `{ type: "ping" }` is supported for compatibility, but it’s only useful for WebSocket-style clients.
 
 ### What you receive
 
@@ -82,17 +63,10 @@ Short Bun client example (you can ask AI to generate more complex scripts follow
 ```ts
 // tmp-client.ts (run: bun tmp-client.ts)
 
-type CommandBody =
-    | {
-            method: "tab" | "cdp";
-            params: { method: string; params?: Record<string, unknown>; targetId?: string };
-        }
-    | {
-            type: "command";
-            id?: number;
-            method: "tab" | "cdp";
-            params: Record<string, unknown>;
-        };
+type CommandBody = {
+    method: "tab" | "cdp";
+    params: { method: string; params?: Record<string, unknown>; targetId?: string };
+};
 
 const call = async (body: CommandBody) => {
     const res = await fetch("http://localhost:9222/command", {
@@ -133,9 +107,8 @@ console.log("evaluate:", evaluated);
 ## Troubleshooting (for users/AI)
 
 - Extension not responding: run `GET /health` first. If it returns `503`, stop issuing commands and manually refresh the browser extension, then retry.
-- Extension not responding (connection issue): if `GET /health` shows `extensionConnected: false`, confirm the extension is loaded and connected to `ws://localhost:9222/extension`.
-- No responses (HTTP): for `POST /command`, you do not need to include an `id` (the relay generates one).
-- No responses (WS client): ensure every command includes an `id`, and you await the response with that exact `id`.
+- Extension not responding (connection issue): if `GET /health` shows `extensionConnected: false`, open the extension popup and switch it to **Active**.
+- No responses (HTTP): confirm request JSON is valid and keep each command small.
 - CDP errors: most often the `targetId` is missing/incorrect—fetch it first via `tab.getActiveTarget`.
 - Port in use: change `SKILL_PORT`, and ensure the extension-side connection address matches (default is `9222`).
 - Request timeout (default 15s): the relay returns a timeout when the extension does not respond within `SKILL_REQUEST_TIMEOUT_MS`. This is usually caused by a command that triggered long-running browser work (a "heavy" operation). Avoid this by splitting work into smaller commands and keeping each CDP call fast; prefer polling/steps over a single heavy operation.
