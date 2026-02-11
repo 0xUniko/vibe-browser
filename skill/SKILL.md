@@ -9,7 +9,7 @@ This `skill` is a **Bun-only** local relay server. It forwards messages produced
 
 The extension connects proactively:
 
-- Health probe: `HEAD http://localhost:9222/healthz`
+- Health probe: `GET http://localhost:9222/health`
 - Extension WebSocket: `ws://localhost:9222/extension`
 
 So the skill must expose HTTP + WS locally (default port `9222`).
@@ -24,13 +24,14 @@ bun relay.ts
 
 You can verify it is up with a browser or curl:
 
-- `GET http://localhost:9222/healthz` → `200`
+- `GET http://localhost:9222/health` runs the full health check and returns JSON details.
+- A healthy result is `200`; unhealthy states return `503` (including disconnected extension or blocked browser extension).
 
 ## How AI should use this (recommended workflow)
 
 Treat this skill as a local message bus between “AI ↔ browser extension”. Typical flow:
 
-1) Ensure the extension is loaded and connected (you can also check `/healthz` and WS status).
+1) Ensure the extension is loaded and connected (check `GET /health` first, then WS status if needed).
 2) Have your AI/script send commands via HTTP: `POST http://localhost:9222/command`.
 3) Use `tab` to fetch the active page’s `targetId`.
 4) Use `cdp` to call CDP methods (e.g. `Runtime.evaluate`, `Page.navigate`, `DOM.getDocument`) with that `targetId`.
@@ -129,18 +130,20 @@ console.log("evaluate:", evaluated);
 
 ## Troubleshooting (for users/AI)
 
-- Extension not responding: confirm the relay is up (`/healthz` returns `200`), then confirm the extension is connected to `ws://localhost:9222/extension`.
+- Extension not responding: run `GET /health` first. If it returns `503` with `browserBlocked: true`, stop issuing commands and manually refresh the browser extension, then retry.
+- Extension not responding (connection issue): if `GET /health` shows `extensionConnected: false`, confirm the extension is loaded and connected to `ws://localhost:9222/extension`.
 - No responses: ensure every command includes an `id`, and you are awaiting the response with that exact `id`.
 - CDP errors: most often the `targetId` is missing/incorrect—fetch it first via `tab.getActiveTarget`.
 - Port in use: change `SKILL_PORT`, and ensure the extension-side connection address matches (default is `9222`).
 - Request timeout (15s): if a command triggers long-running browser work, the request will be cut off and the extension can become blocked. Avoid this by splitting work into smaller commands and keeping each CDP call fast; prefer polling/steps over a single heavy operation.
-- Request timeout keeps occurring: it might be that the extension has been blocked. You should stop the operation and prompt the user to manually refresh the browser extension, then analyze the previous operations to summarize the cause of the blocking and avoid it in the future.
+- Request timeout keeps occurring: treat this as a likely blocked extension. Stop the operation, ask the user to manually refresh the extension, then analyze prior operations and split heavy actions into smaller steps.
 
 ## Configuration (environment variables)
 
 - `SKILL_HOST`: bind address (default `127.0.0.1`)
 - `SKILL_PORT`: port (default `9222`)
 - `SKILL_REQUEST_TIMEOUT_MS`: request timeout (default `15000`)
+- `SKILL_HEALTH_PROBE_TIMEOUT_MS`: timeout for `GET /health` active-target probe (default `min(3000, SKILL_REQUEST_TIMEOUT_MS)`)
 
 ## Code location
 

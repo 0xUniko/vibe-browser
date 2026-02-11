@@ -18,8 +18,6 @@ import {
 } from "./RelayProtocol";
 
 const RELAY_URL = "ws://localhost:9222/extension";
-const RELAY_HTTP = "http://localhost:9222";
-const RELAY_HEALTH = new URL("/healthz", RELAY_HTTP).toString();
 const RECONNECT_INTERVAL_MS = 3000;
 
 export type ConnectionEvent =
@@ -82,22 +80,9 @@ export const ConnectionLive = Layer.effect(
       yield* Ref.set(wsRef, null);
     });
 
-    const checkServerReachable = Effect.tryPromise(async () => {
-      const response = await fetch(RELAY_HEALTH, {
-        method: "HEAD",
-        signal: AbortSignal.timeout(1000),
-      });
-      return response.ok;
-    });
-
     const tryConnectOnce = Effect.gen(function* () {
       const already = yield* isConnected;
       if (already) return;
-
-      const reachable = yield* checkServerReachable.pipe(
-        Effect.catchAll(() => Effect.succeed(false)),
-      );
-      if (!reachable) return;
 
       const socket = yield* Effect.async<WebSocket, Error>((resume) => {
         const ws = new WebSocket(RELAY_URL);
@@ -189,17 +174,7 @@ export const ConnectionLive = Layer.effect(
 
     const checkConnection = Effect.gen(function* () {
       const connected = yield* isConnected;
-      if (!connected) return false;
-
-      const reachable = yield* checkServerReachable.pipe(
-        Effect.catchAll(() => Effect.succeed(false)),
-      );
-      if (reachable) return true;
-
-      // stale socket
-      yield* closeSocket;
-      yield* Queue.offer(eventsQ, { _tag: "Disconnected", reason: "stale" });
-      return false;
+      return connected;
     });
 
     return {

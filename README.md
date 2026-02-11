@@ -112,7 +112,7 @@ curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/i
 
 ## Relay 接口（默认）
 
-- 健康检查：`HEAD /healthz`
+- 健康检查：`GET /health`
 - 发送命令：`POST /command`
 - 事件流（SSE）：`GET /events`
 - 扩展连接（WS）：`ws://localhost:9222/extension`
@@ -123,13 +123,13 @@ curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/i
 SKILL_HOST
 SKILL_PORT
 SKILL_REQUEST_TIMEOUT_MS
+SKILL_HEALTH_PROBE_TIMEOUT_MS
 ```
 
 ---
 
 ## TODO
 
-- 改进健康检查机制，还要检测浏览器是否阻塞，如果阻塞需要提示用户去手动刷新浏览器扩展
 - 清理文档里面关于id的内容，内部id不要对外暴露
 - 优化架构和实现细节，以节省token和降低对模型智力的要求
 

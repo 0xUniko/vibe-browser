@@ -112,7 +112,7 @@ curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/i
 
 ## Relay APIs (Default)
 
-- Health check: `HEAD /healthz`
+- Health check: `GET /health`
 - Send command: `POST /command`
 - Event stream (SSE): `GET /events`
 - Extension connection (WS): `ws://localhost:9222/extension`
@@ -123,13 +123,13 @@ Environment variables:
 SKILL_HOST
 SKILL_PORT
 SKILL_REQUEST_TIMEOUT_MS
+SKILL_HEALTH_PROBE_TIMEOUT_MS
 ```
 
 ---
 
 ## TODO
 
-- Improve the health check mechanism; also detect whether the browser is blocked. If blocked, prompt the user to manually refresh the extension.
 - Remove ID-related details from the documentation; internal IDs should not be exposed externally.
 - Optimize architecture and implementation details to save tokens and reduce cognitive load on the model.
 

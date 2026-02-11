@@ -143,17 +143,32 @@ type WsRole = "extension" | "client";
 type WsData = { role: WsRole };
 type SkillWs = ServerWebSocket<WsData>;
 
+const parsePositiveInt = (rawValue: string | undefined, fallback: number) => {
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+};
+
 const HOST = process.env.SKILL_HOST ?? "127.0.0.1";
-const PORT = Number(process.env.SKILL_PORT ?? "9222");
-const REQUEST_TIMEOUT_MS = Number(
-  process.env.SKILL_REQUEST_TIMEOUT_MS ?? "15000",
+const PORT = parsePositiveInt(process.env.SKILL_PORT, 9222);
+const REQUEST_TIMEOUT_MS = parsePositiveInt(
+  process.env.SKILL_REQUEST_TIMEOUT_MS,
+  15000,
+);
+const HEALTH_PROBE_TIMEOUT_MS = parsePositiveInt(
+  process.env.SKILL_HEALTH_PROBE_TIMEOUT_MS,
+  Math.min(3000, REQUEST_TIMEOUT_MS),
 );
 
-const EXTENSION_KEEPALIVE_MS = Number(
-  process.env.SKILL_EXTENSION_KEEPALIVE_MS ?? "20000",
+const EXTENSION_KEEPALIVE_MS = parsePositiveInt(
+  process.env.SKILL_EXTENSION_KEEPALIVE_MS,
+  20000,
 );
 
-const SSE_KEEPALIVE_MS = Number(process.env.SKILL_SSE_KEEPALIVE_MS ?? "15000");
+const SSE_KEEPALIVE_MS = parsePositiveInt(
+  process.env.SKILL_SSE_KEEPALIVE_MS,
+  15000,
+);
 
 const state = {
   extension: null as SkillWs | null,
@@ -200,6 +215,123 @@ const respondPending = (pendingId: number, msg: ExtensionResponseMessage) => {
   state.pending.delete(pendingId);
 
   pending.resolve(msg);
+};
+
+const failAllPending = (error: string): void => {
+  for (const [pendingId, pending] of state.pending.entries()) {
+    clearTimeout(pending.timeoutId);
+    state.pending.delete(pendingId);
+    pending.resolve({
+      id: pendingId,
+      error,
+    });
+  }
+};
+
+const TIMEOUT_ERROR_PREFIX = "Timeout after";
+const BLOCKED_EXTENSION_HINT =
+  "The browser extension may be blocked. Manually refresh the extension and retry.";
+
+const makeTimeoutError = (
+  timeoutMs: number,
+  includeBlockedHint: boolean,
+): string => {
+  const base = `${TIMEOUT_ERROR_PREFIX} ${timeoutMs}ms`;
+  if (!includeBlockedHint) return base;
+  return `${base}. ${BLOCKED_EXTENSION_HINT}`;
+};
+
+const isTimeoutError = (error: string | undefined): boolean =>
+  typeof error === "string" && error.startsWith(TIMEOUT_ERROR_PREFIX);
+
+const commandErrorToStatus = (error: string | undefined): number => {
+  if (!error) return 200;
+  if (error === "Extension is not connected") return 503;
+  if (isTimeoutError(error)) return 504;
+  return 502;
+};
+
+const sendCommandToExtension = (
+  command: ExtensionCommandMessage,
+  timeoutMs: number,
+  options?: { includeBlockedHint?: boolean },
+): Promise<ExtensionResponseMessage> =>
+  new Promise((resolve) => {
+    const ext = state.extension;
+    if (!ext || ext.readyState !== WebSocket.OPEN) {
+      resolve({
+        id: command.id,
+        error: "Extension is not connected",
+      });
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      respondPending(command.id, {
+        id: command.id,
+        error: makeTimeoutError(timeoutMs, options?.includeBlockedHint === true),
+      });
+    }, timeoutMs);
+
+    state.pending.set(command.id, {
+      resolve,
+      timeoutId,
+    });
+
+    wsSendJson(ext, command);
+  });
+
+type HealthProbe =
+  | {
+      ok: true;
+      browserResponsive: true;
+      browserBlocked: false;
+      message: string;
+    }
+  | {
+      ok: false;
+      browserResponsive: false;
+      browserBlocked: boolean;
+      message: string;
+    };
+
+const runActiveTargetHealthProbe = async (): Promise<HealthProbe> => {
+  const response = await sendCommandToExtension(
+    makeCommand({
+      method: "tab",
+      params: { method: "tab.getActiveTarget" },
+    }),
+    HEALTH_PROBE_TIMEOUT_MS,
+    { includeBlockedHint: false },
+  );
+
+  if (response.error) {
+    const blocked = isTimeoutError(response.error);
+    return {
+      ok: false,
+      browserResponsive: false,
+      browserBlocked: blocked,
+      message: blocked ? `${response.error}. ${BLOCKED_EXTENSION_HINT}` : response.error,
+    };
+  }
+
+  const targetId = isRecord(response.result) ? response.result.targetId : null;
+  if (typeof targetId !== "string" || targetId.trim().length === 0) {
+    return {
+      ok: false,
+      browserResponsive: false,
+      browserBlocked: false,
+      message:
+        "tab.getActiveTarget returned no active target. Keep a normal tab focused and retry.",
+    };
+  }
+
+  return {
+    ok: true,
+    browserResponsive: true,
+    browserBlocked: false,
+    message: "tab.getActiveTarget succeeded.",
+  };
 };
 
 const log = (level: "info" | "warn" | "error", ...args: unknown[]): void => {
@@ -297,21 +429,63 @@ Bun.serve<WsData>({
   fetch(req, bunServer) {
     const url = new URL(req.url);
 
-    // Health check (single endpoint)
-    if (url.pathname === "/healthz") {
-      if (req.method === "HEAD") return new Response(null, { status: 200 });
-      if (req.method === "GET") {
-        return json(
-          {
-            ok: true,
-            extensionConnected:
-              state.extension?.readyState === WebSocket.OPEN ? true : false,
-          },
-          { status: 200 },
-        );
+    const handleHealth = async (): Promise<Response> => {
+      if (req.method !== "GET") {
+        return new Response(null, { status: 405 });
       }
-      return new Response(null, { status: 405 });
-    }
+
+      const extensionConnected =
+        state.extension?.readyState === WebSocket.OPEN ? true : false;
+      if (!extensionConnected) {
+        const status = 503;
+        const payload = {
+          ok: false,
+          relayReachable: true,
+          extensionConnected: false,
+          browserResponsive: null,
+          browserBlocked: null,
+          checkedAt: new Date().toISOString(),
+          checks: {
+            activeTargetProbe: {
+              ok: false,
+              timeoutMs: HEALTH_PROBE_TIMEOUT_MS,
+              message: "Skipped because extension is not connected.",
+            },
+          },
+          action: "Open the extension popup, switch it to Active, then retry.",
+        } satisfies Json;
+        return json(payload, { status });
+      }
+
+      const probe = await runActiveTargetHealthProbe();
+      const healthy = probe.ok;
+      const status = healthy ? 200 : 503;
+      const payload = {
+        ok: healthy,
+        relayReachable: true,
+        extensionConnected: true,
+        browserResponsive: probe.browserResponsive,
+        browserBlocked: probe.browserBlocked,
+        checkedAt: new Date().toISOString(),
+        checks: {
+          activeTargetProbe: {
+            ok: probe.ok,
+            timeoutMs: HEALTH_PROBE_TIMEOUT_MS,
+            message: probe.message,
+          },
+        },
+        action: probe.browserBlocked
+          ? "Browser extension appears blocked. Manually refresh the extension, then retry."
+          : healthy
+            ? null
+            : "Keep a normal browser tab focused, then retry.",
+      } satisfies Json;
+
+      return json(payload, { status });
+    };
+
+    // Health check (single endpoint)
+    if (url.pathname === "/health") return handleHealth();
 
     const handleHttpCommand = async (): Promise<Response> => {
       const bodyText = await req.text();
@@ -324,45 +498,19 @@ Bun.serve<WsData>({
         );
       }
 
-      const ext = state.extension;
-      if (!ext || ext.readyState !== WebSocket.OPEN) {
-        return json(
-          { ok: false, error: "Extension is not connected" },
-          { status: 503 },
-        );
-      }
-
-      return await new Promise<Response>((resolve) => {
-        const timeoutId = setTimeout(() => {
-          respondPending(command.id, {
-            id: command.id,
-            error: `Timeout after ${REQUEST_TIMEOUT_MS}ms`,
-          });
-        }, REQUEST_TIMEOUT_MS);
-
-        state.pending.set(command.id, {
-          resolve: (msg) => {
-            const status = msg.error
-              ? msg.error.startsWith("Timeout")
-                ? 504
-                : 502
-              : 200;
-            resolve(
-              json(
-                {
-                  ok: msg.error ? false : true,
-                  result: (msg.result ?? null) as Json,
-                  error: msg.error ?? null,
-                },
-                { status },
-              ),
-            );
-          },
-          timeoutId,
-        });
-
-        wsSendJson(ext, command);
+      const msg = await sendCommandToExtension(command, REQUEST_TIMEOUT_MS, {
+        includeBlockedHint: true,
       });
+      const status = commandErrorToStatus(msg.error);
+
+      return json(
+        {
+          ok: msg.error ? false : true,
+          result: (msg.result ?? null) as Json,
+          error: msg.error ?? null,
+        },
+        { status },
+      );
     };
 
     // HTTP command bridge (primary public API)
@@ -457,6 +605,7 @@ Bun.serve<WsData>({
       const role = ws.data.role;
       if (role === "extension") {
         if (state.extension && state.extension.readyState === WebSocket.OPEN) {
+          failAllPending("Extension reconnected; previous in-flight commands were canceled.");
           log("warn", "Replacing existing extension connection");
           try {
             state.extension.close(1012, "Replaced");
@@ -515,6 +664,7 @@ Bun.serve<WsData>({
 
         state.extension = null;
         stopExtensionKeepalive();
+        failAllPending("Extension disconnected before command completed.");
         log("warn", "Extension disconnected", { code, reason });
         sseBroadcast({ type: "status", extensionConnected: false });
         return;

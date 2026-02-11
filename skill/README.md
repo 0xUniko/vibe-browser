@@ -12,6 +12,13 @@ To run:
 bun run relay.ts
 ```
 
+Health checks:
+
+```bash
+# full health check (JSON details + status code)
+curl http://127.0.0.1:9222/health
+```
+
 Utility scripts:
 
 ```bash
