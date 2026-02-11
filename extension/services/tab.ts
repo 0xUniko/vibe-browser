@@ -37,6 +37,7 @@ export interface TabRegistry {
   countOpenTabs: Effect.Effect<number, unknown>;
   getActiveTabId: Effect.Effect<{ tabId: number }, unknown>;
   getActiveTargetId: Effect.Effect<ActiveTarget, unknown>;
+  createTab: (url: string) => Effect.Effect<{ tabId: number }, unknown>;
 
   handleCommand: (
     msg: ExtensionCommandMessage,
@@ -229,6 +230,19 @@ export const TabRegistryLive = Layer.effect(
         yield* deleteTab(tabId);
       });
 
+    const createTab = (url: string) =>
+      Effect.gen(function* () {
+        const tab = yield* Effect.tryPromise({
+          try: () => chrome.tabs.create({ url }),
+          catch: (e) => new Error(`Failed to create tab: ${errorToMessage(e)}`),
+        });
+        const tabId = tab.id;
+        if (typeof tabId !== "number") {
+          throw new Error("Created tab has no id");
+        }
+        return { tabId };
+      });
+
     const detachAll = Effect.gen(function* () {
       const tabs = yield* Ref.get(tabsRef);
       for (const tabId of tabs.keys()) {
@@ -260,6 +274,15 @@ export const TabRegistryLive = Layer.effect(
             return yield* getActiveTargetId;
           }
 
+          case "createTab":
+          case "tab.createTab": {
+            const url = msg.params.params?.url;
+            if (typeof url !== "string" || !url.trim()) {
+              throw new Error("tab.createTab requires a non-empty 'url' param");
+            }
+            return yield* createTab(url);
+          }
+
           default: {
             throw new Error(`Unknown tab method: ${msg.params.method}`);
           }
@@ -280,6 +303,7 @@ export const TabRegistryLive = Layer.effect(
       countOpenTabs,
       getActiveTabId,
       getActiveTargetId,
+      createTab,
       handleCommand,
     } satisfies TabRegistry;
   }),

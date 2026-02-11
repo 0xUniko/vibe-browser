@@ -27,10 +27,10 @@ You can verify it is up with a browser or curl:
 
 Treat this skill as a local message bus between "AI ↔ browser extension". Typical flow:
 
-1) Ensure the extension is loaded and connected (check `GET /health` first).
-2) Have your AI/script send commands via HTTP: `POST http://localhost:9222/command`.
-3) Use `tab` to fetch the active page’s `targetId`.
-4) Use `cdp` to call CDP methods (e.g. `Runtime.evaluate`, `Page.navigate`, `DOM.getDocument`) with that `targetId`.
+1. Ensure the extension is loaded and connected (check `GET /health` first).
+2. Have your AI/script send commands via HTTP: `POST http://localhost:9222/command`.
+3. Use `tab` to fetch the active page’s `targetId`.
+4. Use `cdp` to call CDP methods (e.g. `Runtime.evaluate`, `Page.navigate`, `DOM.getDocument`) with that `targetId`.
 
 There are only two key rules:
 
@@ -64,42 +64,50 @@ Short Bun client example (you can ask AI to generate more complex scripts follow
 // tmp-client.ts (run: bun tmp-client.ts)
 
 type CommandBody = {
-    method: "tab" | "cdp";
-    params: { method: string; params?: Record<string, unknown>; targetId?: string };
+  method: "tab" | "cdp";
+  params: {
+    method: string;
+    params?: Record<string, unknown>;
+    targetId?: string;
+  };
 };
 
 const call = async (body: CommandBody) => {
-    const res = await fetch("http://localhost:9222/command", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-    });
-    return (await res.json()) as { ok: boolean; result: any; error: string | null };
+  const res = await fetch("http://localhost:9222/command", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return (await res.json()) as {
+    ok: boolean;
+    result: any;
+    error: string | null;
+  };
 };
 
 // Example 1: List all browser targets (no targetId needed)
 const targets = await call({
-    method: "cdp",
-    params: { method: "Target.getTargets" },
+  method: "cdp",
+  params: { method: "Target.getTargets" },
 });
 console.log("all targets:", targets.result?.targetInfos?.length);
 
 // Example 2: Get active tab's target
 const active = await call({
-    method: "tab",
-    params: { method: "tab.getActiveTarget" },
+  method: "tab",
+  params: { method: "tab.getActiveTarget" },
 });
 const targetId = active?.result?.targetId;
 console.log("active targetId:", targetId);
 
 // Example 3: Evaluate JS in the active tab (requires targetId)
 const evaluated = await call({
-    method: "cdp",
-    params: {
-        method: "Runtime.evaluate",
-        targetId,
-        params: { expression: "1 + 2" },
-    },
+  method: "cdp",
+  params: {
+    method: "Runtime.evaluate",
+    targetId,
+    params: { expression: "1 + 2" },
+  },
 });
 console.log("evaluate:", evaluated);
 ```
