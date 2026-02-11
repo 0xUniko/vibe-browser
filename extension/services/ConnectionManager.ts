@@ -17,7 +17,7 @@ import {
   type ExtensionCommandMessage,
 } from "./RelayProtocol";
 
-const RELAY_URL = "ws://localhost:9222/extension";
+const RELAY_URL = "ws://127.0.0.1:9222/extension";
 const RECONNECT_INTERVAL_MS = 3000;
 
 export type ConnectionEvent =
