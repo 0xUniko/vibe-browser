@@ -48,6 +48,37 @@ Use this command shape:
 { method: "tab" | "cdp", params: { method: string, params?: object, targetId?: string } }
 ```
 
+### `tab` methods
+
+These manage browser tabs and debugger attachment. They do **not** require a `targetId`.
+
+| Method                  | Params            | Returns               | Description                                                                                              |
+| ----------------------- | ----------------- | --------------------- | -------------------------------------------------------------------------------------------------------- |
+| `tab.getActiveTarget`   | —                 | `{ tabId, targetId }` | Get the active tab and auto-attach the debugger. Use the returned `targetId` for subsequent `cdp` calls. |
+| `tab.getActiveTargetId` | —                 | `string` (targetId)   | Same as above but returns only the `targetId` string.                                                    |
+| `tab.countTabs`         | —                 | `number`              | Count all open tabs.                                                                                     |
+| `tab.createTab`         | `{ url: string }` | `{ tabId }`           | Open a new tab navigated to the given URL.                                                               |
+
+Example — open a new tab:
+
+```ts
+await call({
+  method: "tab",
+  params: { method: "tab.createTab", params: { url: "https://example.com" } },
+});
+```
+
+### `cdp` methods
+
+These forward Chrome DevTools Protocol commands to a specific target. Most require a `targetId` (obtain one via `tab.getActiveTarget` first).
+
+| Method               | targetId required? | Description                                      |
+| -------------------- | ------------------ | ------------------------------------------------ |
+| `Target.getTargets`  | No                 | List all browser targets (pages, workers, etc.). |
+| Any other CDP method | **Yes**            | Forwarded as `chrome.debugger.sendCommand`.      |
+
+Common CDP methods: `Runtime.evaluate`, `Page.navigate`, `DOM.getDocument`, `Network.enable`, etc. See the [Chrome DevTools Protocol docs](https://chromedevtools.github.io/devtools-protocol/) for the full list.
+
 ### What you receive
 
 - HTTP response (from `POST /command`): `{ ok: boolean, result: any | null, error: string | null }`
