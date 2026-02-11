@@ -2,11 +2,11 @@
 // This unified recorder captures both HTTP(S) requests and WebSocket traffic.
 //
 // Run:
-//   bun .agents/skills/vibe-browser-skill/record-network.ts <targetId> [outFile] [autoStopMs]
+//   bun .agents/skills/vibe-browser/record-network.ts <targetId> [outFile] [autoStopMs]
 //
 // Or:
-//   TARGET_ID=... bun .agents/skills/vibe-browser-skill/record-network.ts
-//   OUT_FILE=...  bun .agents/skills/vibe-browser-skill/record-network.ts
+//   TARGET_ID=... bun .agents/skills/vibe-browser/record-network.ts
+//   OUT_FILE=...  bun .agents/skills/vibe-browser/record-network.ts
 //
 // Env:
 //   RELAY_URL=http://localhost:9222
@@ -389,7 +389,7 @@ const main = async () => {
   const targetId = getTargetIdFromArgs();
   if (!targetId) {
     throw new Error(
-      "Missing targetId. Usage: bun .agents/skills/vibe-browser-skill/record-network.ts <targetId> (or set env TARGET_ID)",
+      "Missing targetId. Usage: bun .agents/skills/vibe-browser/record-network.ts <targetId> (or set env TARGET_ID)",
     );
   }
 

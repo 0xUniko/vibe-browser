@@ -1,5 +1,5 @@
 // Get current active tab targetId from vibe-browser relay.
-// Run: bun .agents/skills/vibe-browser-skill/get-active-target.ts
+// Run: bun .agents/skills/vibe-browser/get-active-target.ts
 // Env:
 //   RELAY_URL=http://localhost:9222
 

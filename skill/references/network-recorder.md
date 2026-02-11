@@ -1,20 +1,20 @@
 # Network Recorder (HTTP + WebSocket)
 
-Script: `.agents/skills/vibe-browser-skill/record-network.ts`
+Script: `.agents/skills/vibe-browser/record-network.ts`
 
 Purpose: subscribe to CDP `Network.*` events via the vibe-browser relay and write both HTTP request/response and WebSocket handshake/frames into a single JSONL file for offline analysis.
 
 ## Usage
 
 ```bash
-bun .agents/skills/vibe-browser-skill/record-network.ts <targetId> [outFile] [autoStopMs]
+bun .agents/skills/vibe-browser/record-network.ts <targetId> [outFile] [autoStopMs]
 ```
 
 Via environment variables:
 
 ```bash
-TARGET_ID=... bun .agents/skills/vibe-browser-skill/record-network.ts
-OUT_FILE=...  bun .agents/skills/vibe-browser-skill/record-network.ts
+TARGET_ID=... bun .agents/skills/vibe-browser/record-network.ts
+OUT_FILE=...  bun .agents/skills/vibe-browser/record-network.ts
 ```
 
 Default output: `network-events.jsonl`
@@ -51,13 +51,13 @@ Default output: `network-events.jsonl`
 
 ```bash
 # record HTTP + WS, stop after 30 seconds
-bun .agents/skills/vibe-browser-skill/record-network.ts <targetId> network-events.jsonl 30000
+bun .agents/skills/vibe-browser/record-network.ts <targetId> network-events.jsonl 30000
 
 # HTTP only
-INCLUDE_WS=0 HTTP_ONLY=1 bun .agents/skills/vibe-browser-skill/record-network.ts <targetId> network-requests.jsonl 20000
+INCLUDE_WS=0 HTTP_ONLY=1 bun .agents/skills/vibe-browser/record-network.ts <targetId> network-requests.jsonl 20000
 
 # WS only, and only sockets containing "gmgn.ai"
-INCLUDE_HTTP=0 URL_INCLUDES=gmgn.ai bun .agents/skills/vibe-browser-skill/record-network.ts <targetId> ws.jsonl 20000
+INCLUDE_HTTP=0 URL_INCLUDES=gmgn.ai bun .agents/skills/vibe-browser/record-network.ts <targetId> ws.jsonl 20000
 ```
 
 ## Record types (`type`)

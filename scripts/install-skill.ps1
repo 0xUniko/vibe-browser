@@ -1,40 +1,30 @@
 $ErrorActionPreference = "Stop"
 
-# Install vibe-browser "skill" into Claude Code's skills directory.
-# Usage (project scope, default):
-#   irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-claude-code-skill.ps1 | iex
+# Install vibe-browser skill into a target project's .agents/skills/ directory.
+# Usage:
+#   irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-skill.ps1 | iex
 #
 # Optional env vars:
-#   REPO_URL      (default: https://github.com/0xUniko/vibe-browser.git)
-#   REPO_REF      (default: main)  # branch/tag/commit
-#   SKILL_NAME    (default: vibe-browser)
-#   TARGET_DIR    (default: current directory) # used when CLAUDE_SCOPE=project
-#   CLAUDE_SCOPE  (default: project)           # project | user
+#   REPO_URL   (default: https://github.com/0xUniko/vibe-browser.git)
+#   REPO_REF   (default: main)  # branch/tag/commit
+#   SKILL_NAME (default: vibe-browser)
+#   TARGET_DIR (default: current directory)
 
 $repoUrl = if ($env:REPO_URL) { $env:REPO_URL } else { "https://github.com/0xUniko/vibe-browser.git" }
 $repoRef = if ($env:REPO_REF) { $env:REPO_REF } else { "main" }
 $skillName = if ($env:SKILL_NAME) { $env:SKILL_NAME } else { "vibe-browser" }
 $targetDir = if ($env:TARGET_DIR) { $env:TARGET_DIR } else { (Get-Location).Path }
-$claudeScope = if ($env:CLAUDE_SCOPE) { $env:CLAUDE_SCOPE } else { "project" }
-
-if ($claudeScope -ne "project" -and $claudeScope -ne "user") {
-    throw "CLAUDE_SCOPE must be 'project' or 'user' (got: $claudeScope)"
-}
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     throw "missing required command: git"
 }
 
-if ($claudeScope -eq "project") {
-    if (-not (Test-Path -LiteralPath $targetDir -PathType Container)) {
-        throw "TARGET_DIR does not exist: $targetDir"
-    }
-    $targetDir = (Resolve-Path -LiteralPath $targetDir).Path
-    $destDir = Join-Path $targetDir (".claude\\skills\\{0}" -f $skillName)
+if (-not (Test-Path -LiteralPath $targetDir -PathType Container)) {
+    throw "TARGET_DIR does not exist: $targetDir"
 }
-else {
-    $destDir = Join-Path $HOME (".claude\\skills\\{0}" -f $skillName)
-}
+
+$targetDir = (Resolve-Path -LiteralPath $targetDir).Path
+$destDir = Join-Path $targetDir (".agents\\skills\\{0}" -f $skillName)
 
 $tmpDir = Join-Path $env:TEMP ("vibe-browser-" + [guid]::NewGuid().ToString())
 $repoDir = Join-Path $tmpDir "repo"
@@ -50,19 +40,32 @@ try {
         throw "repo does not contain expected directory: skill/ (looked for: $srcSkillDir)"
     }
 
-    $skillMd = Join-Path $srcSkillDir "SKILL.md"
-    if (-not (Test-Path -LiteralPath $skillMd -PathType Leaf)) {
-        throw "repo skill/ does not contain SKILL.md (looked for: $skillMd)"
+    $requiredFiles = @(
+        "SKILL.md"
+        "relay.ts"
+        "get-active-target.ts"
+        "record-network.ts"
+    )
+    foreach ($file in $requiredFiles) {
+        $path = Join-Path $srcSkillDir $file
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "missing required file in skill/: $file"
+        }
+    }
+
+    $referencesDir = Join-Path $srcSkillDir "references"
+    if (-not (Test-Path -LiteralPath $referencesDir -PathType Container)) {
+        throw "missing required directory in skill/: references/"
     }
 
     Write-Host "==> Installing into: $destDir"
     Remove-Item -LiteralPath $destDir -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Path $destDir -Force | Out-Null
 
-    # Copy all files including dotfiles.
-    Get-ChildItem -LiteralPath $srcSkillDir -Force | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination $destDir -Recurse -Force
+    foreach ($file in $requiredFiles) {
+        Copy-Item -LiteralPath (Join-Path $srcSkillDir $file) -Destination (Join-Path $destDir $file) -Force
     }
+    Copy-Item -LiteralPath $referencesDir -Destination (Join-Path $destDir "references") -Recurse -Force
 
     $installedSkillMd = Join-Path $destDir "SKILL.md"
     $lines = Get-Content -LiteralPath $installedSkillMd
@@ -106,13 +109,8 @@ try {
     Write-Host "==> Done."
     Write-Host ""
     Write-Host "Next:"
-    if ($claudeScope -eq "project") {
-        Write-Host "  1) Open Claude Code in this project directory"
-    }
-    else {
-        Write-Host "  1) Restart Claude Code"
-    }
-    Write-Host ("  2) Type '/{0}' to load the skill" -f $skillName)
+    Write-Host "  1) Restart your local agent in this project directory"
+    Write-Host ("  2) Load '/{0}' in your agent" -f $skillName)
     Write-Host ""
     Write-Host "Installed:"
     Write-Host ("  {0}" -f $destDir)
@@ -120,4 +118,3 @@ try {
 finally {
     Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
 }
-

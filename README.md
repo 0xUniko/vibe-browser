@@ -65,33 +65,28 @@ Connected to relay
 
 ---
 
-### 为你的项目添加skill
+### 3. 为你的项目添加skill
 
-将`skill\SKILL.md`放入合适的地方让本地ai能够使用
+将 `skill/SKILL.md` 放入目标项目的 `.agents/skills/<skill-name>/` 下，让本地 AI 能发现并加载。
 
-或者使用快速设置脚本：
+或者使用通用安装脚本（兼容 Claude Code / opencode 等本地 agent）：
 
-#### Claude Code
+默认会安装到 `.agents/skills/vibe-browser/`。
 
-在你的目标项目根目录执行（会安装到 `.claude/skills/vibe-browser/`，然后可以用 `/<skill>` 调用）：
+在你的目标项目根目录执行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-claude-code-skill.sh | bash
+curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-skill.sh | bash
 ```
 
 PowerShell（Windows）：
 
 ```powershell
-irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-claude-code-skill.ps1 | iex
+irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-skill.ps1 | iex
 ```
 
-#### opencode
-
-在你的目标项目根目录（运行 `opencode` 的目录）执行：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-opencode-skill.sh | bash
-```
+可选环境变量：`SKILL_NAME`、`TARGET_DIR`、`REPO_URL`、`REPO_REF`。
+安装脚本只会复制最小运行集合：`SKILL.md`、`relay.ts`、`get-active-target.ts`、`record-network.ts`、`references/`。
 
 ---
 
@@ -106,7 +101,7 @@ curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/i
   连接你的工具 / 脚本 / AI 与扩展
 
 - `scripts/`  
-  一键安装脚本，用于向 OpenCode / Claude Code 注入 skill
+  一键安装脚本，用于向本地 agent 注入 skill（统一目录 `.agents/skills`）
 
 ---
 

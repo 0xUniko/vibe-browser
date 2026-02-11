@@ -154,21 +154,21 @@ console.log("evaluate:", evaluated);
 These scripts are generic relay/CDP helpers and are not GMGN-specific:
 
 - Active tab target lookup:
-  - `bun .agents/skills/vibe-browser-skill/get-active-target.ts`
+  - `bun .agents/skills/vibe-browser/get-active-target.ts`
 - Unified network recorder (HTTP + WebSocket):
-  - `bun .agents/skills/vibe-browser-skill/record-network.ts <targetId> [outFile] [autoStopMs]`
+  - `bun .agents/skills/vibe-browser/record-network.ts <targetId> [outFile] [autoStopMs]`
 
 Recorder quick examples:
 
 ```bash
 # record both HTTP + WS (default)
-bun .agents/skills/vibe-browser-skill/record-network.ts <targetId>
+bun .agents/skills/vibe-browser/record-network.ts <targetId>
 
 # record HTTP only
-INCLUDE_WS=0 HTTP_ONLY=1 bun .agents/skills/vibe-browser-skill/record-network.ts <targetId>
+INCLUDE_WS=0 HTTP_ONLY=1 bun .agents/skills/vibe-browser/record-network.ts <targetId>
 
 # record WS only
-INCLUDE_HTTP=0 bun .agents/skills/vibe-browser-skill/record-network.ts <targetId> ws.jsonl 20000
+INCLUDE_HTTP=0 bun .agents/skills/vibe-browser/record-network.ts <targetId> ws.jsonl 20000
 ```
 
 Detailed options: [references/network-recorder.md](references/network-recorder.md)

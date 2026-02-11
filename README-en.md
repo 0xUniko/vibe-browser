@@ -65,33 +65,28 @@ Connected to relay
 
 ---
 
-## Add the Skill into Your Project
+### 3. Add the Skill into Your Project
 
-Place `skill/SKILL.md` in the appropriate location so your local AI can use it.
+Place `skill/SKILL.md` under `.agents/skills/<skill-name>/` in your target project so your local AI can discover and load it.
 
-Or use the quick setup scripts below:
+Or use the universal installer scripts below (compatible with Claude Code / opencode and other local agents).
 
-### Claude Code
+By default, the skill is installed to `.agents/skills/vibe-browser/`.
 
-Run in your target project root (installs to `.claude/skills/vibe-browser/`, then invoke with `/<skill>`):
+Run in your target project root:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-claude-code-skill.sh | bash
+curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-skill.sh | bash
 ```
 
 PowerShell (Windows):
 
 ```powershell
-irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-claude-code-skill.ps1 | iex
+irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-skill.ps1 | iex
 ```
 
-### opencode
-
-Run in your target project root (where you execute `opencode`):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-opencode-skill.sh | bash
-```
+Optional env vars: `SKILL_NAME`, `TARGET_DIR`, `REPO_URL`, `REPO_REF`.
+The installer only copies the minimal runtime set: `SKILL.md`, `relay.ts`, `get-active-target.ts`, `record-network.ts`, and `references/`.
 
 ---
 
@@ -106,7 +101,7 @@ curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/i
   Connects your tools / scripts / AI with the extension
 
 - `scripts/`  
-  One-click installation scripts for injecting the skill into OpenCode / Claude Code
+  One-click installation scripts for injecting the skill into local agents (shared `.agents/skills` directory)
 
 ---
 

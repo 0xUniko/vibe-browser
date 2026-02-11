@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install vibe-browser "skill" into a target project's .opencode/skills/ directory
+# Install vibe-browser skill into a target project's .agents/skills/ directory.
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-opencode-skill.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-skill.sh | bash
 #
 # Optional env vars:
 #   REPO_URL   (default: https://github.com/0xUniko/vibe-browser.git)
@@ -29,7 +29,9 @@ need_cmd cp
 need_cmd rm
 need_cmd mkdir
 need_cmd awk
-need_cmd sed
+need_cmd head
+need_cmd grep
+need_cmd mv
 
 if [[ ! -d "$TARGET_DIR" ]]; then
   echo "error: TARGET_DIR does not exist: $TARGET_DIR" >&2
@@ -37,7 +39,7 @@ if [[ ! -d "$TARGET_DIR" ]]; then
 fi
 
 TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
-DEST_DIR="$TARGET_DIR/.opencode/skills/$SKILL_NAME"
+DEST_DIR="$TARGET_DIR/.agents/skills/$SKILL_NAME"
 
 tmpdir="$(mktemp -d)"
 cleanup() { rm -rf "$tmpdir"; }
@@ -53,40 +55,65 @@ if [[ ! -d "$SRC_SKILL_DIR" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$SRC_SKILL_DIR/SKILL.md" ]]; then
-  echo "error: repo skill/ does not contain SKILL.md" >&2
-  echo "       looked for: $SRC_SKILL_DIR/SKILL.md" >&2
+required_files=(
+  "SKILL.md"
+  "relay.ts"
+  "get-active-target.ts"
+  "record-network.ts"
+)
+for file in "${required_files[@]}"; do
+  if [[ ! -f "$SRC_SKILL_DIR/$file" ]]; then
+    echo "error: missing required file in skill/: $file" >&2
+    exit 1
+  fi
+done
+
+if [[ ! -d "$SRC_SKILL_DIR/references" ]]; then
+  echo "error: missing required directory in skill/: references/" >&2
   exit 1
 fi
 
 echo "==> Installing into: $DEST_DIR"
 rm -rf "$DEST_DIR"
-mkdir -p "$(dirname "$DEST_DIR")"
 mkdir -p "$DEST_DIR"
 
-# Copy whole skill directory content to destination
-# (so SKILL.md + any README/package.json/examples are available)
-cp -a "$SRC_SKILL_DIR/." "$DEST_DIR/"
+for file in "${required_files[@]}"; do
+  cp -a "$SRC_SKILL_DIR/$file" "$DEST_DIR/$file"
+done
+cp -a "$SRC_SKILL_DIR/references" "$DEST_DIR/references"
 
-# Ensure frontmatter name matches SKILL_NAME (OpenCode expects this)
-# Only rewrites within the first YAML frontmatter block if present.
+# Ensure the SKILL.md frontmatter name matches SKILL_NAME.
 SKILL_MD="$DEST_DIR/SKILL.md"
 if head -n 1 "$SKILL_MD" | grep -q '^---$'; then
   awk -v want_name="$SKILL_NAME" '
-    BEGIN { in_fm=0; done=0; }
+    BEGIN { in_fm=0; found_name=0; }
     NR==1 && $0=="---" { in_fm=1; print; next }
-    in_fm==1 && $0=="---" { in_fm=0; done=1; print; next }
-    in_fm==1 && $0 ~ /^name:[[:space:]]*/ { print "name: " want_name; next }
+    in_fm==1 && $0=="---" {
+      if (found_name==0) print "name: " want_name
+      in_fm=0
+      print
+      next
+    }
+    in_fm==1 && $0 ~ /^name:[[:space:]]*/ { print "name: " want_name; found_name=1; next }
     { print }
   ' "$SKILL_MD" > "$SKILL_MD.tmp"
+  mv "$SKILL_MD.tmp" "$SKILL_MD"
+else
+  {
+    echo '---'
+    echo "name: $SKILL_NAME"
+    echo '---'
+    echo
+    cat "$SKILL_MD"
+  } > "$SKILL_MD.tmp"
   mv "$SKILL_MD.tmp" "$SKILL_MD"
 fi
 
 echo "==> Done."
 echo
 echo "Next:"
-echo "  1) Restart opencode in this project directory"
-echo "  2) Check available skills in opencode UI"
+echo "  1) Restart your local agent in this project directory"
+echo "  2) Load '/$SKILL_NAME' in your agent"
 echo
 echo "Installed:"
 echo "  $DEST_DIR"
