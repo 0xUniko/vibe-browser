@@ -38,13 +38,13 @@ const evalInPage = async (targetId: string, expression: string) => {
 };
 
 const main = async () => {
-  console.log("✓ 正在连接浏览器 relay...", RELAY_URL);
+  console.log("Connecting to browser relay...", RELAY_URL);
 
   const active = await call("tab", { method: "tab.getActiveTarget" });
   const targetId = active?.result?.targetId;
 
   if (typeof targetId !== "string" || !targetId.trim()) {
-    console.error("✗ 无法获取活动标签页 targetId");
+    console.error("Failed to get active tab targetId");
     if (process.env.RAW === "1") {
       console.error("raw:", JSON.stringify(active, null, 2));
     }
@@ -58,9 +58,9 @@ const main = async () => {
   const url = urlRes?.result?.result?.value ?? "(unknown)";
   const title = titleRes?.result?.result?.value ?? "(unknown)";
 
-  console.log(`✓ targetId=${targetId}`);
-  console.log(`✓ url=${url}`);
-  console.log(`✓ title=${title}`);
+  console.log(`targetId=${targetId}`);
+  console.log(`url=${url}`);
+  console.log(`title=${title}`);
 };
 
 main().catch((err) => {
