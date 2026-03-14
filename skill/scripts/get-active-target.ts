@@ -33,10 +33,11 @@ type HealthResponse = {
 
 type EvaluateResultEnvelope = {
   result?: {
-    result?: {
-      value?: unknown;
-    };
+    type?: string;
+    value?: unknown;
+    description?: string;
   };
+  exceptionDetails?: unknown;
 };
 
 const isRecord = (value: unknown): value is JsonObject =>
@@ -99,9 +100,13 @@ const evalInPage = async (
 const getNestedValue = (payload: unknown): string => {
   if (!isRecord(payload)) return "(unknown)";
   const result = payload as EvaluateResultEnvelope;
-  return typeof result.result?.result?.value === "string"
-    ? result.result.result.value
-    : "(unknown)";
+  if (typeof result.result?.value === "string") {
+    return result.result.value;
+  }
+  if (typeof result.result?.description === "string") {
+    return result.result.description;
+  }
+  return "(unknown)";
 };
 
 const main = async (): Promise<void> => {
