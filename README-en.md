@@ -48,7 +48,7 @@ Enable the extension and switch it to **Active**.
 ### 2. Start the Relay
 
 ```bash
-bun skill/relay.ts
+bun skill/scripts/relay.ts
 ```
 
 Default address:
@@ -86,7 +86,7 @@ irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-
 ```
 
 Optional env vars: `SKILL_NAME`, `TARGET_DIR`, `REPO_URL`, `REPO_REF`.
-The installer only copies the minimal runtime set: `SKILL.md`, `relay.ts`, `get-active-target.ts`, `record-network.ts`, and `references/`.
+The installer only copies the minimal skill set: `SKILL.md`, `agents/`, `scripts/`, and `references/`.
 
 ---
 

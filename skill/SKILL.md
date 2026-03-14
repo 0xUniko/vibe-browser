@@ -1,193 +1,52 @@
 ---
 name: vibe-browser
-description: Connect Claude (or any local agent) to your real browser via the Vibe relay and a Chromium extension (Tab API + CDP).
+description: Connect a local AI agent to the user's real Chromium browser through the vibe-browser relay and extension. Use when the agent needs to inspect pages, drive tabs, call Chrome DevTools Protocol methods, or capture browser network traffic from an already-running user browser session.
 ---
 
-# Vibe Skill (Local Relay Server)
+# Vibe Browser
 
-This `skill` is a **Bun-only** local relay server. It forwards messages between the browser extension (`extension/`) and your local tools/scripts/AI agents so the browser can be controlled through Tab APIs + CDP.
+Treat this skill as an HTTP bridge to a relay that the user runs manually. Never start the relay yourself. Always verify `GET http://127.0.0.1:9222/health` first and only continue when it is healthy.
 
-For users/AI, treat this as an HTTP service (default port `9222`). Extension-side connection details are internal implementation details.
+## Follow this workflow
 
-## Quick start
+1. Check `GET /health`.
+2. If the request fails, or returns a non-`200` status, stop and tell the user to manually start or recover the relay.
+3. Only after health is good, use `POST /command` and `GET /events`.
+4. Keep browser work incremental. Prefer many small CDP calls over one heavy operation.
 
-From the directory containing `relay.ts` (this folder):
+## Tell the user this when relay is unavailable
 
-```bash
-bun relay.ts
+Use direct wording. Do not attempt to launch the process yourself.
+
+```text
+Relay is not ready. Please start or recover it manually, then tell me to continue.
+Expected command: bun .agents/skills/vibe-browser/scripts/relay.ts
+Then confirm http://127.0.0.1:9222/health returns 200.
 ```
 
-You can verify it is up with a browser or curl:
+If `/health` says the extension is disconnected, instruct the user to open the extension popup and switch it to `Active`. If `/health` says the browser is blocked, instruct the user to refresh the extension manually in `chrome://extensions` or `edge://extensions`.
 
-- `GET http://localhost:9222/health` runs the full health check and returns JSON details.
-- A healthy result is `200`; unhealthy states return `503` (e.g. disconnected extension, or the extension failing a quick probe).
-- Note: `/health` is a best-effort reachability check. With concurrent command handling in the extension, a `200` does not guarantee there is no ongoing long-running browser work.
+## Command protocol
 
-## How AI should use this (recommended workflow)
-
-Treat this skill as a local message bus between "AI ↔ browser extension". Typical flow:
-
-1. Ensure the extension is loaded and connected (check `GET /health` first).
-2. Have your AI/script send commands via HTTP: `POST http://localhost:9222/command`.
-3. Use `tab` to fetch the active page’s `targetId`.
-4. Use `cdp` to call CDP methods (e.g. `Runtime.evaluate`, `Page.navigate`, `DOM.getDocument`) with that `targetId`.
-
-There are only two key rules:
-
-- Most `cdp` calls require a valid `targetId` (fetch it first via `tab.getActiveTarget` or list all via `Target.getTargets`).
-- `Target.getTargets` is special—it doesn't need a `targetId` and returns all browser targets.
-- Avoid issuing a single heavy/long-running operation. Prefer many small calls and wait for each response before sending the next one.
-
-## Minimal protocol reference (condensed)
-
-### What you send to the relay (HTTP `POST /command`)
-
-Use this command shape:
+Send commands to `POST /command` with this shape:
 
 ```ts
-{ method: "tab" | "cdp", params: { method: string, params?: object, targetId?: string } }
-```
-
-### `tab` methods
-
-These manage browser tabs and debugger attachment. They do **not** require a `targetId`.
-
-| Method                  | Params            | Returns               | Description                                                                                              |
-| ----------------------- | ----------------- | --------------------- | -------------------------------------------------------------------------------------------------------- |
-| `tab.getActiveTarget`   | —                 | `{ tabId, targetId }` | Get the active tab and auto-attach the debugger. Use the returned `targetId` for subsequent `cdp` calls. |
-| `tab.getActiveTargetId` | —                 | `string` (targetId)   | Same as above but returns only the `targetId` string.                                                    |
-| `tab.countTabs`         | —                 | `number`              | Count all open tabs.                                                                                     |
-| `tab.createTab`         | `{ url: string }` | `{ tabId }`           | Open a new tab navigated to the given URL.                                                               |
-
-Example — open a new tab:
-
-```ts
-await call({
-  method: "tab",
-  params: { method: "tab.createTab", params: { url: "https://example.com" } },
-});
-```
-
-### `cdp` methods
-
-These forward Chrome DevTools Protocol commands to a specific target. Most require a `targetId` (obtain one via `tab.getActiveTarget` first).
-
-| Method               | targetId required? | Description                                      |
-| -------------------- | ------------------ | ------------------------------------------------ |
-| `Target.getTargets`  | No                 | List all browser targets (pages, workers, etc.). |
-| Any other CDP method | **Yes**            | Forwarded as `chrome.debugger.sendCommand`.      |
-
-Common CDP methods: `Runtime.evaluate`, `Page.navigate`, `DOM.getDocument`, `Network.enable`, etc. See the [Chrome DevTools Protocol docs](https://chromedevtools.github.io/devtools-protocol/) for the full list.
-
-### What you receive
-
-- HTTP response (from `POST /command`): `{ ok: boolean, result: any | null, error: string | null }`
-- SSE stream (from `GET /events`): JSON messages such as:
-  - `{ type: "status", extensionConnected: boolean }`
-  - `{ method: "forwardCDPEvent", params: { method, params?, targetId? } }`
-  - `{ method: "log", params: { level, args } }`
-
-## Example: get targetId, then evaluate
-
-Short Bun client example (you can ask AI to generate more complex scripts following this pattern):
-
-```ts
-// tmp-client.ts (run: bun tmp-client.ts)
-
-type CommandBody = {
-  method: "tab" | "cdp";
+{
+  method: "tab" | "cdp",
   params: {
     method: string;
     params?: Record<string, unknown>;
     targetId?: string;
   };
-};
-
-const call = async (body: CommandBody) => {
-  const res = await fetch("http://localhost:9222/command", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return (await res.json()) as {
-    ok: boolean;
-    result: any;
-    error: string | null;
-  };
-};
-
-// Example 1: List all browser targets (no targetId needed)
-const targets = await call({
-  method: "cdp",
-  params: { method: "Target.getTargets" },
-});
-console.log("all targets:", targets.result?.targetInfos?.length);
-
-// Example 2: Get active tab's target
-const active = await call({
-  method: "tab",
-  params: { method: "tab.getActiveTarget" },
-});
-const targetId = active?.result?.targetId;
-console.log("active targetId:", targetId);
-
-// Example 3: Evaluate JS in the active tab (requires targetId)
-const evaluated = await call({
-  method: "cdp",
-  params: {
-    method: "Runtime.evaluate",
-    targetId,
-    params: { expression: "1 + 2" },
-  },
-});
-console.log("evaluate:", evaluated);
+}
 ```
 
-## Troubleshooting (for users/AI)
+Use `tab.getActiveTarget` before most `cdp` calls. `Target.getTargets` is the main exception and does not require `targetId`.
 
-- Extension not responding: run `GET /health` first. If it returns `503`, stop issuing commands and manually refresh the browser extension, then retry.
-- Extension not responding (connection issue): if `GET /health` shows `extensionConnected: false`, open the extension popup and switch it to **Active**.
-- No responses (HTTP): confirm request JSON is valid and keep each command small.
-- CDP errors: most often the `targetId` is missing/incorrect—fetch it first via `tab.getActiveTarget`.
-- Port in use: change `SKILL_PORT`, and ensure the extension-side connection address matches (default is `9222`).
-- Request timeout (default 15s): the relay returns a timeout when the extension does not respond within `SKILL_REQUEST_TIMEOUT_MS`. This is usually caused by a command that triggered long-running browser work (a "heavy" operation). Avoid this by splitting work into smaller commands and keeping each CDP call fast; prefer polling/steps over a single heavy operation.
-- Why this happens (important): the extension now processes commands concurrently, so `GET /health` (or `tab.getActiveTarget`) is no longer a reliable "blocked or not" signal. A quick probe can succeed even while another long-running command is still executing or a specific target is jammed.
-- After a timeout: the original command may still complete in the extension and arrive late as an `orphan-response` on `GET /events`. This is a strong sign the operation was too heavy and should be decomposed.
-- Timeouts keep occurring: treat this as a likely blocked/unresponsive extension (service worker stuck, debugger pipeline jammed, or browser work saturated). Stop issuing commands and manually refresh the extension.
-- Manual refresh (Chrome): open `chrome://extensions`, find `vibe-browser`, click the reload icon (or toggle it off and on), then open the extension popup and switch it to **Active** again.
-- Manual refresh (Edge): open `edge://extensions` and do the same.
+## Use bundled scripts
 
-## Configuration (environment variables)
+- Active tab lookup: `bun .agents/skills/vibe-browser/scripts/get-active-target.ts`
+- Network recorder: `bun .agents/skills/vibe-browser/scripts/record-network.ts <targetId> [outFile] [autoStopMs]`
+- Relay entrypoint for the user: `bun .agents/skills/vibe-browser/scripts/relay.ts`
 
-- `SKILL_HOST`: bind address (default `127.0.0.1`)
-- `SKILL_PORT`: port (default `9222`)
-- `SKILL_REQUEST_TIMEOUT_MS`: request timeout (default `15000`)
-- `SKILL_HEALTH_PROBE_TIMEOUT_MS`: timeout for `GET /health` active-target probe (default `min(3000, SKILL_REQUEST_TIMEOUT_MS)`)
-
-## Code location
-
-- Implementation: [relay.ts](relay.ts)
-
-## Utility scripts
-
-These scripts are generic relay/CDP helpers and are not GMGN-specific:
-
-- Active tab target lookup:
-  - `bun .agents/skills/vibe-browser/get-active-target.ts`
-- Unified network recorder (HTTP + WebSocket):
-  - `bun .agents/skills/vibe-browser/record-network.ts <targetId> [outFile] [autoStopMs]`
-
-Recorder quick examples:
-
-```bash
-# record both HTTP + WS (default)
-bun .agents/skills/vibe-browser/record-network.ts <targetId>
-
-# record HTTP only
-INCLUDE_WS=0 HTTP_ONLY=1 bun .agents/skills/vibe-browser/record-network.ts <targetId>
-
-# record WS only
-INCLUDE_HTTP=0 bun .agents/skills/vibe-browser/record-network.ts <targetId> ws.jsonl 20000
-```
-
-Detailed options: [references/network-recorder.md](references/network-recorder.md)
+Read [references/network-recorder.md](references/network-recorder.md) only when you need recorder options.

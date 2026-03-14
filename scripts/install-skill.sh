@@ -57,9 +57,6 @@ fi
 
 required_files=(
   "SKILL.md"
-  "relay.ts"
-  "get-active-target.ts"
-  "record-network.ts"
 )
 for file in "${required_files[@]}"; do
   if [[ ! -f "$SRC_SKILL_DIR/$file" ]]; then
@@ -68,10 +65,25 @@ for file in "${required_files[@]}"; do
   fi
 done
 
-if [[ ! -d "$SRC_SKILL_DIR/references" ]]; then
-  echo "error: missing required directory in skill/: references/" >&2
-  exit 1
-fi
+required_script_files=(
+  "scripts/relay.ts"
+  "scripts/get-active-target.ts"
+  "scripts/record-network.ts"
+)
+for file in "${required_script_files[@]}"; do
+  if [[ ! -f "$SRC_SKILL_DIR/$file" ]]; then
+    echo "error: missing required script in skill/: $file" >&2
+    exit 1
+  fi
+done
+
+required_dirs=("references" "scripts" "agents")
+for dir in "${required_dirs[@]}"; do
+  if [[ ! -d "$SRC_SKILL_DIR/$dir" ]]; then
+    echo "error: missing required directory in skill/: $dir/" >&2
+    exit 1
+  fi
+done
 
 echo "==> Installing into: $DEST_DIR"
 rm -rf "$DEST_DIR"
@@ -80,7 +92,9 @@ mkdir -p "$DEST_DIR"
 for file in "${required_files[@]}"; do
   cp -a "$SRC_SKILL_DIR/$file" "$DEST_DIR/$file"
 done
-cp -a "$SRC_SKILL_DIR/references" "$DEST_DIR/references"
+for dir in "${required_dirs[@]}"; do
+  cp -a "$SRC_SKILL_DIR/$dir" "$DEST_DIR/$dir"
+done
 
 # Ensure the SKILL.md frontmatter name matches SKILL_NAME.
 SKILL_MD="$DEST_DIR/SKILL.md"
@@ -107,6 +121,17 @@ else
     cat "$SKILL_MD"
   } > "$SKILL_MD.tmp"
   mv "$SKILL_MD.tmp" "$SKILL_MD"
+fi
+
+OPENAI_YAML="$DEST_DIR/agents/openai.yaml"
+if [[ -f "$OPENAI_YAML" ]]; then
+  awk -v skill_name="$SKILL_NAME" '
+    /^\s*default_prompt:\s*"Use \$[^ ]+/ {
+      sub(/Use \$[^ ]+/, "Use $" skill_name)
+    }
+    { print }
+  ' "$OPENAI_YAML" > "$OPENAI_YAML.tmp"
+  mv "$OPENAI_YAML.tmp" "$OPENAI_YAML"
 fi
 
 echo "==> Done."

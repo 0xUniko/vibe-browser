@@ -3,6 +3,10 @@ type Json = JsonPrimitive | Json[] | { [key: string]: Json };
 
 import type { ServerWebSocket } from "bun";
 
+declare const process: {
+  env: Record<string, string | undefined>;
+};
+
 type ExtensionMethod = "cdp" | "tab";
 
 export interface ExtensionCommandMessage {
@@ -142,6 +146,20 @@ const isClientEnvelope = (v: unknown): v is ClientEnvelope => {
 type WsRole = "extension" | "client";
 type WsData = { role: WsRole };
 type SkillWs = ServerWebSocket<WsData>;
+type BunServer = {
+  upgrade(req: Request, options: { data: WsData }): boolean;
+};
+type BunServeOptions = {
+  hostname: string;
+  port: number;
+  idleTimeout: number;
+  fetch(req: Request, bunServer: BunServer): Response | Promise<Response>;
+  websocket: {
+    open(ws: SkillWs): void;
+    message(ws: SkillWs, data: string | ArrayBuffer | Uint8Array): void;
+    close(ws: SkillWs, code: number, reason: string): void;
+  };
+};
 
 const parsePositiveInt = (rawValue: string | undefined, fallback: number) => {
   const parsed = Number(rawValue);
@@ -422,7 +440,7 @@ const parseHttpCommandBody = (
   });
 };
 
-Bun.serve<WsData>({
+const serverOptions: BunServeOptions = {
   hostname: HOST,
   port: PORT,
   idleTimeout: 0,
@@ -671,7 +689,9 @@ Bun.serve<WsData>({
       }
     },
   },
-});
+};
+
+Bun.serve<WsData>(serverOptions);
 
 log("info", `Relay listening on http://${HOST}:${PORT}`);
 log("info", `WS extension endpoint: ws://${HOST}:${PORT}/extension`);

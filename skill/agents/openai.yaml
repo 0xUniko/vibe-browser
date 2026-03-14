@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vibe Browser"
+  short_description: "Drive a real browser via local relay"
+  default_prompt: "Use $vibe-browser to inspect or control the user's current Chromium browser session through the local relay."

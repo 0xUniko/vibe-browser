@@ -2,11 +2,11 @@
 // This unified recorder captures both HTTP(S) requests and WebSocket traffic.
 //
 // Run:
-//   bun .agents/skills/vibe-browser/record-network.ts <targetId> [outFile] [autoStopMs]
+//   bun .agents/skills/vibe-browser/scripts/record-network.ts <targetId> [outFile] [autoStopMs]
 //
 // Or:
-//   TARGET_ID=... bun .agents/skills/vibe-browser/record-network.ts
-//   OUT_FILE=...  bun .agents/skills/vibe-browser/record-network.ts
+//   TARGET_ID=... bun .agents/skills/vibe-browser/scripts/record-network.ts
+//   OUT_FILE=...  bun .agents/skills/vibe-browser/scripts/record-network.ts
 //
 // Env:
 //   RELAY_URL=http://localhost:9222
@@ -87,10 +87,40 @@ const MAX_PAYLOAD_CHARS = process.env.MAX_PAYLOAD_CHARS
   ? Number.parseInt(String(process.env.MAX_PAYLOAD_CHARS), 10)
   : 0;
 
+type HealthResponse = {
+  ok: boolean;
+  action?: string | null;
+  checks?: {
+    activeTargetProbe?: {
+      message?: string;
+    };
+  };
+};
+
 type RelayCommandMethod = "tab" | "cdp";
 type RelayOk = { ok: true; result: any; error: null };
 type RelayErr = { ok: false; result: null; error: string | null };
 type RelayResp = RelayOk | RelayErr;
+
+const assertRelayHealthy = async (): Promise<void> => {
+  let response: Response;
+  try {
+    response = await fetch(`${RELAY_URL}/health`);
+  } catch {
+    throw new Error(
+      `Relay is unreachable at ${RELAY_URL}. Ask the user to manually start it with: bun .agents/skills/vibe-browser/scripts/relay.ts`,
+    );
+  }
+
+  const payload = (await response.json()) as HealthResponse;
+  if (response.ok && payload.ok) return;
+
+  const probeMessage = payload.checks?.activeTargetProbe?.message;
+  const action = payload.action ?? "Ask the user to manually recover the relay and extension.";
+  throw new Error(
+    `Relay is not ready at ${RELAY_URL}. ${probeMessage ? `${probeMessage} ` : ""}${action}`,
+  );
+};
 
 const call = async (
   method: RelayCommandMethod,
@@ -389,9 +419,11 @@ const main = async () => {
   const targetId = getTargetIdFromArgs();
   if (!targetId) {
     throw new Error(
-      "Missing targetId. Usage: bun .agents/skills/vibe-browser/record-network.ts <targetId> (or set env TARGET_ID)",
+      "Missing targetId. Usage: bun .agents/skills/vibe-browser/scripts/record-network.ts <targetId> (or set env TARGET_ID)",
     );
   }
+
+  await assertRelayHealthy();
 
   const indent = Number.isFinite(JSONL_INDENT) ? Math.max(0, JSONL_INDENT) : 2;
   const out = createWriteStream(OUT_FILE, { flags: "w" });

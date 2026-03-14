@@ -48,7 +48,7 @@ extension/.output/chrome-mv3
 ### 2. 启动 relay
 
 ```bash
-bun skill/relay.ts
+bun skill/scripts/relay.ts
 ```
 
 默认地址：
@@ -86,7 +86,7 @@ irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-
 ```
 
 可选环境变量：`SKILL_NAME`、`TARGET_DIR`、`REPO_URL`、`REPO_REF`。
-安装脚本只会复制最小运行集合：`SKILL.md`、`relay.ts`、`get-active-target.ts`、`record-network.ts`、`references/`。
+安装脚本只会复制最小 skill 集合：`SKILL.md`、`agents/`、`scripts/`、`references/`。
 
 ---
 
@@ -131,6 +131,7 @@ SKILL_HEALTH_PROBE_TIMEOUT_MS
 ## TODO
 
 - 优化架构和实现细节，以节省token和降低对模型智力的要求
+- 添加bunx/npx skills的安装方案
 
 ## License
 

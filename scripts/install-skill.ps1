@@ -40,12 +40,7 @@ try {
         throw "repo does not contain expected directory: skill/ (looked for: $srcSkillDir)"
     }
 
-    $requiredFiles = @(
-        "SKILL.md"
-        "relay.ts"
-        "get-active-target.ts"
-        "record-network.ts"
-    )
+    $requiredFiles = @("SKILL.md")
     foreach ($file in $requiredFiles) {
         $path = Join-Path $srcSkillDir $file
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -53,9 +48,24 @@ try {
         }
     }
 
-    $referencesDir = Join-Path $srcSkillDir "references"
-    if (-not (Test-Path -LiteralPath $referencesDir -PathType Container)) {
-        throw "missing required directory in skill/: references/"
+    $requiredScriptFiles = @(
+        "scripts\\relay.ts"
+        "scripts\\get-active-target.ts"
+        "scripts\\record-network.ts"
+    )
+    foreach ($file in $requiredScriptFiles) {
+        $path = Join-Path $srcSkillDir $file
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "missing required script in skill/: $file"
+        }
+    }
+
+    $requiredDirs = @("references", "scripts", "agents")
+    foreach ($dir in $requiredDirs) {
+        $path = Join-Path $srcSkillDir $dir
+        if (-not (Test-Path -LiteralPath $path -PathType Container)) {
+            throw "missing required directory in skill/: $dir/"
+        }
     }
 
     Write-Host "==> Installing into: $destDir"
@@ -65,7 +75,9 @@ try {
     foreach ($file in $requiredFiles) {
         Copy-Item -LiteralPath (Join-Path $srcSkillDir $file) -Destination (Join-Path $destDir $file) -Force
     }
-    Copy-Item -LiteralPath $referencesDir -Destination (Join-Path $destDir "references") -Recurse -Force
+    foreach ($dir in $requiredDirs) {
+        Copy-Item -LiteralPath (Join-Path $srcSkillDir $dir) -Destination (Join-Path $destDir $dir) -Recurse -Force
+    }
 
     $installedSkillMd = Join-Path $destDir "SKILL.md"
     $lines = Get-Content -LiteralPath $installedSkillMd
@@ -104,6 +116,20 @@ try {
             ""
         ) + $lines
         Set-Content -LiteralPath $installedSkillMd -Value $new -Encoding utf8
+    }
+
+    $openAiYaml = Join-Path $destDir "agents\\openai.yaml"
+    if (Test-Path -LiteralPath $openAiYaml -PathType Leaf) {
+        $yaml = Get-Content -LiteralPath $openAiYaml
+        $yaml = $yaml | ForEach-Object {
+            if ($_ -match '^\s*default_prompt:\s*"Use \$[^ ]+') {
+                $_ -replace 'Use \$[^ ]+', ("Use `${0}" -f $skillName)
+            }
+            else {
+                $_
+            }
+        }
+        Set-Content -LiteralPath $openAiYaml -Value $yaml -Encoding utf8
     }
 
     Write-Host "==> Done."
