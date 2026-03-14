@@ -45,7 +45,15 @@ extension/.output/chrome-mv3
 
 ---
 
-### 2. 启动 relay
+### 2. 为你的项目添加skill
+
+```bash
+bunx skills add https://github.com/0xUniko/vibe-browser
+```
+
+---
+
+### 3. 启动 relay
 
 ```bash
 bun skill/scripts/relay.ts
@@ -65,31 +73,6 @@ Connected to relay
 
 ---
 
-### 3. 为你的项目添加skill
-
-将 `skill/SKILL.md` 放入目标项目的 `.agents/skills/<skill-name>/` 下，让本地 AI 能发现并加载。
-
-或者使用通用安装脚本（兼容 Claude Code / opencode 等本地 agent）：
-
-默认会安装到 `.agents/skills/vibe-browser/`。
-
-在你的目标项目根目录执行：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-skill.sh | bash
-```
-
-PowerShell（Windows）：
-
-```powershell
-irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-skill.ps1 | iex
-```
-
-可选环境变量：`SKILL_NAME`、`TARGET_DIR`、`REPO_URL`、`REPO_REF`。
-安装脚本只会复制最小 skill 集合：`SKILL.md`、`agents/`、`scripts/`、`references/`。
-
----
-
 ## 技术架构
 
 - `extension/`  
@@ -99,9 +82,6 @@ irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-
 - `skill/`  
   本地 Relay 服务（对外 HTTP + SSE）  
   连接你的工具 / 脚本 / AI 与扩展
-
-- `scripts/`  
-  一键安装脚本，用于向本地 agent 注入 skill（统一目录 `.agents/skills`）
 
 ---
 
@@ -131,7 +111,6 @@ SKILL_HEALTH_PROBE_TIMEOUT_MS
 ## TODO
 
 - 优化架构和实现细节，以节省token和降低对模型智力的要求
-- 添加bunx/npx skills的安装方案
 
 ## License
 

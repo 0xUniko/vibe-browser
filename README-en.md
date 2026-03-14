@@ -45,7 +45,15 @@ Enable the extension and switch it to **Active**.
 
 ---
 
-### 2. Start the Relay
+### 2. Add the Skill into Your Project
+
+```bash
+bunx skills add https://github.com/0xUniko/vibe-browser
+```
+
+---
+
+### 3. Start the Relay
 
 ```bash
 bun skill/scripts/relay.ts
@@ -65,31 +73,6 @@ Connected to relay
 
 ---
 
-### 3. Add the Skill into Your Project
-
-Place `skill/SKILL.md` under `.agents/skills/<skill-name>/` in your target project so your local AI can discover and load it.
-
-Or use the universal installer scripts below (compatible with Claude Code / opencode and other local agents).
-
-By default, the skill is installed to `.agents/skills/vibe-browser/`.
-
-Run in your target project root:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-skill.sh | bash
-```
-
-PowerShell (Windows):
-
-```powershell
-irm https://raw.githubusercontent.com/0xUniko/vibe-browser/main/scripts/install-skill.ps1 | iex
-```
-
-Optional env vars: `SKILL_NAME`, `TARGET_DIR`, `REPO_URL`, `REPO_REF`.
-The installer only copies the minimal skill set: `SKILL.md`, `agents/`, `scripts/`, and `references/`.
-
----
-
 ## Architecture
 
 - `extension/`  
@@ -99,9 +82,6 @@ The installer only copies the minimal skill set: `SKILL.md`, `agents/`, `scripts
 - `skill/`  
   Local relay service (public HTTP + SSE)  
   Connects your tools / scripts / AI with the extension
-
-- `scripts/`  
-  One-click installation scripts for injecting the skill into local agents (shared `.agents/skills` directory)
 
 ---
 
