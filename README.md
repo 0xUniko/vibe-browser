@@ -111,6 +111,7 @@ SKILL_HEALTH_PROBE_TIMEOUT_MS
 ## TODO
 
 - 优化架构和实现细节，以节省token和降低对模型智力的要求
+- chrome浏览器已经开放了当前profile的cdp的websocket接口，理论上不再需要单独安装一个扩展把cdp暴露出去。接下来这个项目将结合chrome-devtools-mcp进行完全重构，只需要skill即可
 
 ## License
 
