@@ -11,7 +11,11 @@ import type {
   ExtensionCommandMessage,
   ExtensionResponseMessage,
 } from "../services/RelayProtocol";
-import { StateStore, StateStoreLive } from "../services/StateManager";
+import {
+  DEFAULT_PORT,
+  StateStore,
+  StateStoreLive,
+} from "../services/StateManager";
 import { TabRegistry, TabRegistryLive } from "../services/tab";
 import type { PopupMessage, StateResponse } from "./popup/messages";
 
@@ -20,7 +24,7 @@ export default defineBackground(() => {
   const KEEPALIVE_PERIOD_MINUTES = 0.5;
 
   const stateLayer = StateStoreLive;
-  const connectionLayer = ConnectionLive;
+  const connectionLayer = ConnectionLive.pipe(Layer.provide(stateLayer));
   const tabLayer = TabRegistryLive.pipe(Layer.provide(connectionLayer));
   const cdpRouterLayer = CDPLive.pipe(
     Layer.provide(connectionLayer),
@@ -40,6 +44,12 @@ export default defineBackground(() => {
 
   const runFork = <A, E, R>(eff: Effect.Effect<A, E, R>) => {
     runtime.runFork(eff as Effect.Effect<A, E, AppEnv>);
+  };
+
+  const fallbackStateResponse: StateResponse = {
+    isActive: false,
+    isConnected: false,
+    port: DEFAULT_PORT,
   };
 
   const updateBadge = (isActive: boolean) =>
@@ -62,7 +72,8 @@ export default defineBackground(() => {
     Effect.gen(function* () {
       const state = yield* StateStore;
       const connection = yield* Connection;
-      yield* state.set({ isActive });
+      const current = yield* state.get;
+      yield* state.set({ isActive, port: current.port });
       if (isActive) {
         yield* createKeepAliveAlarm;
         yield* connection.startMaintaining;
@@ -115,11 +126,12 @@ export default defineBackground(() => {
               return {
                 isActive: current.isActive,
                 isConnected,
+                port: current.port,
               } satisfies StateResponse;
             }),
           )
           .then(sendResponse)
-          .catch(() => sendResponse({ isActive: false, isConnected: false }));
+          .catch(() => sendResponse(fallbackStateResponse));
         return true; // Async response
       }
 
@@ -135,11 +147,44 @@ export default defineBackground(() => {
               return {
                 isActive: current.isActive,
                 isConnected,
+                port: current.port,
               } satisfies StateResponse;
             }),
           )
           .then(sendResponse)
-          .catch(() => sendResponse({ isActive: false, isConnected: false }));
+          .catch(() => sendResponse(fallbackStateResponse));
+        return true; // Async response
+      }
+
+      if (message.type === "setPort") {
+        runtime
+          .runPromise(
+            Effect.gen(function* () {
+              const state = yield* StateStore;
+              const connection = yield* Connection;
+              const current = yield* state.get;
+
+              yield* state.set({
+                isActive: current.isActive,
+                port: message.port,
+              });
+
+              if (current.isActive) {
+                yield* connection.disconnect;
+                yield* connection.startMaintaining;
+              }
+
+              const next = yield* state.get;
+              const isConnected = yield* connection.checkConnection;
+              return {
+                isActive: next.isActive,
+                isConnected,
+                port: next.port,
+              } satisfies StateResponse;
+            }),
+          )
+          .then(sendResponse)
+          .catch(() => sendResponse(fallbackStateResponse));
         return true; // Async response
       }
 
@@ -207,8 +252,10 @@ export default defineBackground(() => {
           yield* connection.send(response);
         }).pipe(Effect.catchAll(() => Effect.void));
 
-      const processMessages = Stream.runForEach(connection.messages, (message) =>
-        Effect.forkDaemon(handleMessage(message)).pipe(Effect.asVoid),
+      const processMessages = Stream.runForEach(
+        connection.messages,
+        (message) =>
+          Effect.forkDaemon(handleMessage(message)).pipe(Effect.asVoid),
       );
 
       yield* Effect.forkDaemon(processEvents);

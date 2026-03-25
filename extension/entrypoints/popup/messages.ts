@@ -11,9 +11,15 @@ export interface SetStateMessage {
   isActive: boolean;
 }
 
+export interface SetPortMessage {
+  type: "setPort";
+  port: number;
+}
+
 export interface StateResponse {
   isActive: boolean;
   isConnected: boolean;
+  port: number;
 }
 
-export type PopupMessage = GetStateMessage | SetStateMessage;
+export type PopupMessage = GetStateMessage | SetStateMessage | SetPortMessage;

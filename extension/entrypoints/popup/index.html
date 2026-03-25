@@ -1,23 +1,30 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vibe Browser</title>
-    <link rel="stylesheet" href="./style.css" />
-  </head>
-  <body>
-    <div class="popup">
-      <h1>Vibe Browser</h1>
-      <div class="toggle-row">
-        <label class="toggle">
-          <input type="checkbox" id="active-toggle" />
-          <span class="slider"></span>
-        </label>
-        <span id="status-text">Inactive</span>
-      </div>
-      <p id="connection-status" class="connection-status"></p>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vibe Browser</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+
+<body>
+  <div class="popup">
+    <h1>Vibe Browser</h1>
+    <div class="toggle-row">
+      <label class="toggle">
+        <input type="checkbox" id="active-toggle" />
+        <span class="slider"></span>
+      </label>
+      <span id="status-text">Inactive</span>
     </div>
-    <script type="module" src="./main.ts"></script>
-  </body>
+    <label class="field" for="port-input">
+      <span class="field-label">Port</span>
+      <input id="port-input" class="field-input" type="number" min="1" max="65535" value="9111" />
+    </label>
+    <p id="connection-status" class="connection-status"></p>
+  </div>
+  <script type="module" src="./main.ts"></script>
+</body>
+
 </html>

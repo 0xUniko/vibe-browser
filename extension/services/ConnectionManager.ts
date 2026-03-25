@@ -16,9 +16,12 @@ import {
   isExtensionCommandMessage,
   type ExtensionCommandMessage,
 } from "./RelayProtocol";
+import { StateStore } from "./StateManager";
 
-const RELAY_URL = "ws://127.0.0.1:9222/extension";
 const RECONNECT_INTERVAL_MS = 3000;
+
+const getRelayUrl = (port: number): string =>
+  `ws://127.0.0.1:${String(port)}/extension`;
 
 export type ConnectionEvent =
   | { _tag: "Connected" }
@@ -39,6 +42,7 @@ export const Connection = Context.GenericTag<Connection>("vibe/Connection");
 export const ConnectionLive = Layer.effect(
   Connection,
   Effect.gen(function* () {
+    const state = yield* StateStore;
     const wsRef = yield* Ref.make<WebSocket | null>(null);
     const maintainRef = yield* Ref.make(false);
     const fiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, never> | null>(
@@ -84,8 +88,11 @@ export const ConnectionLive = Layer.effect(
       const already = yield* isConnected;
       if (already) return;
 
+      const currentState = yield* state.get;
+      const relayUrl = getRelayUrl(currentState.port);
+
       const socket = yield* Effect.async<WebSocket, Error>((resume) => {
-        const ws = new WebSocket(RELAY_URL);
+        const ws = new WebSocket(relayUrl);
 
         const timeoutId = setTimeout(() => {
           try {
