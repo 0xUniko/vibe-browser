@@ -5,7 +5,7 @@ description: Connect a local AI agent to the user's real Chromium browser throug
 
 # Vibe Browser
 
-Treat this skill as an HTTP bridge to a relay that the user runs manually. Never start the relay yourself. Always verify `GET http://127.0.0.1:9222/health` first and only continue when it is healthy.
+Treat this skill as an HTTP bridge to a relay that the user runs manually. Never start the relay yourself. Always verify `GET http://127.0.0.1:9111/health` first and only continue when it is healthy.
 
 ## Follow this workflow
 
@@ -21,7 +21,7 @@ Use direct wording. Do not attempt to launch the process yourself.
 ```text
 Relay is not ready. Please start or recover it manually, then tell me to continue.
 Expected command: bun .agents/skills/vibe-browser/scripts/relay.ts
-Then confirm http://127.0.0.1:9222/health returns 200.
+Then confirm http://127.0.0.1:9111/health returns 200.
 ```
 
 If `/health` says the extension is disconnected, instruct the user to open the extension popup and switch it to `Active`. If `/health` says the browser is blocked, instruct the user to refresh the extension manually in `chrome://extensions` or `edge://extensions`.

@@ -64,7 +64,7 @@ bun skill/scripts/relay.ts
 Default address:
 
 ```
-http://127.0.0.1:9222
+http://127.0.0.1:9111
 ```
 
 After a successful connection, the extension will show:

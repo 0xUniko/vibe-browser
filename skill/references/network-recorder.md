@@ -23,7 +23,7 @@ Default output: `network-events.jsonl`
 
 | Variable | Description | Default |
 |---------|-------------|---------|
-| `RELAY_URL` | relay base URL | `http://localhost:9222` |
+| `RELAY_URL` | relay base URL | `http://localhost:9111` |
 | `OUT_FILE` | output file (must end with `.jsonl`) | `network-events.jsonl` |
 | `AUTO_STOP_MS` | auto stop after N ms (also supported as the 3rd positional arg) | 0 |
 | `ALL_TARGETS=1` | record events from all targets | false |

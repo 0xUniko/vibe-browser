@@ -1,9 +1,9 @@
 // Get current active tab targetId from vibe-browser relay.
 // Run: bun .agents/skills/vibe-browser/scripts/get-active-target.ts
 // Env:
-//   RELAY_URL=http://localhost:9222
+//   RELAY_URL=http://localhost:9111
 
-const RELAY_URL = process.env.RELAY_URL ?? "http://localhost:9222";
+const RELAY_URL = process.env.RELAY_URL ?? "http://localhost:9111";
 
 declare const process: {
   env: Record<string, string | undefined>;
@@ -61,12 +61,12 @@ const assertRelayHealthy = async (): Promise<void> => {
   if (response.ok && payload.ok) return;
 
   const probeMessage = payload.checks?.activeTargetProbe?.message;
-  const action = payload.action ?? "Ask the user to manually recover the relay and extension.";
+  const action =
+    payload.action ??
+    "Ask the user to manually recover the relay and extension.";
   const detail = probeMessage ? `${probeMessage} ${action}` : action;
 
-  throw new Error(
-    `Relay is not ready at ${RELAY_URL}. ${detail}`.trim(),
-  );
+  throw new Error(`Relay is not ready at ${RELAY_URL}. ${detail}`.trim());
 };
 
 const call = async (

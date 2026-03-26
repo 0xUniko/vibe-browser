@@ -9,7 +9,7 @@
 //   OUT_FILE=...  bun .agents/skills/vibe-browser/scripts/record-network.ts
 //
 // Env:
-//   RELAY_URL=http://localhost:9222
+//   RELAY_URL=http://localhost:9111
 //   OUT_FILE=network-events.jsonl
 //   AUTO_STOP_MS=30000
 //   ALL_TARGETS=1          (record events from all targets, not only the provided targetId)
@@ -36,7 +36,7 @@ import { createWriteStream } from "node:fs";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const process: any;
 
-const RELAY_URL = process.env.RELAY_URL ?? "http://localhost:9222";
+const RELAY_URL = process.env.RELAY_URL ?? "http://localhost:9111";
 
 const getPositionalArgs = (): string[] => {
   const args = Array.isArray(process.argv) ? process.argv.slice(2) : [];
@@ -116,7 +116,9 @@ const assertRelayHealthy = async (): Promise<void> => {
   if (response.ok && payload.ok) return;
 
   const probeMessage = payload.checks?.activeTargetProbe?.message;
-  const action = payload.action ?? "Ask the user to manually recover the relay and extension.";
+  const action =
+    payload.action ??
+    "Ask the user to manually recover the relay and extension.";
   throw new Error(
     `Relay is not ready at ${RELAY_URL}. ${probeMessage ? `${probeMessage} ` : ""}${action}`,
   );
@@ -443,7 +445,10 @@ const main = async () => {
     httpRecords.delete(requestId);
   };
 
-  const getWsConn = (requestId: string, evTargetId?: string | null): ConnMeta => {
+  const getWsConn = (
+    requestId: string,
+    evTargetId?: string | null,
+  ): ConnMeta => {
     const existing = wsConns.get(requestId);
     if (existing) {
       if (!existing.targetId && evTargetId) existing.targetId = evTargetId;
@@ -534,9 +539,11 @@ const main = async () => {
     }
 
     writer.write({ type: "recorder_stop", at: nowIso(), reason });
-    await call("cdp", { method: "Network.disable", targetId, params: {} }).catch(
-      () => null,
-    );
+    await call("cdp", {
+      method: "Network.disable",
+      targetId,
+      params: {},
+    }).catch(() => null);
     await call("cdp", { method: "Page.disable", targetId, params: {} }).catch(
       () => null,
     );
@@ -851,7 +858,8 @@ const main = async () => {
         targetId: conn.targetId,
         requestId,
         url: conn.url,
-        timestamp: typeof evParams?.timestamp === "number" ? evParams.timestamp : null,
+        timestamp:
+          typeof evParams?.timestamp === "number" ? evParams.timestamp : null,
         request: {
           headers: redactHeaderMap(evParams?.request?.headers ?? null),
         },
@@ -867,9 +875,13 @@ const main = async () => {
         targetId: conn.targetId,
         requestId,
         url: conn.url,
-        timestamp: typeof evParams?.timestamp === "number" ? evParams.timestamp : null,
+        timestamp:
+          typeof evParams?.timestamp === "number" ? evParams.timestamp : null,
         response: {
-          status: typeof evParams?.response?.status === "number" ? evParams.response.status : null,
+          status:
+            typeof evParams?.response?.status === "number"
+              ? evParams.response.status
+              : null,
           statusText:
             typeof evParams?.response?.statusText === "string"
               ? evParams.response.statusText
@@ -900,7 +912,8 @@ const main = async () => {
         requestId,
         url: conn.url,
         direction: evMethod.endsWith("Sent") ? "sent" : "received",
-        timestamp: typeof evParams?.timestamp === "number" ? evParams.timestamp : null,
+        timestamp:
+          typeof evParams?.timestamp === "number" ? evParams.timestamp : null,
         opcode: typeof response?.opcode === "number" ? response.opcode : null,
         mask: typeof response?.mask === "boolean" ? response.mask : null,
         payloadData: trunc.text,
@@ -918,7 +931,8 @@ const main = async () => {
         targetId: conn.targetId,
         requestId,
         url: conn.url,
-        timestamp: typeof evParams?.timestamp === "number" ? evParams.timestamp : null,
+        timestamp:
+          typeof evParams?.timestamp === "number" ? evParams.timestamp : null,
         ...(RAW ? { raw: rawMsg ?? null } : {}),
       });
       wsConns.delete(requestId);
@@ -932,9 +946,12 @@ const main = async () => {
         targetId: conn.targetId,
         requestId,
         url: conn.url,
-        timestamp: typeof evParams?.timestamp === "number" ? evParams.timestamp : null,
+        timestamp:
+          typeof evParams?.timestamp === "number" ? evParams.timestamp : null,
         errorMessage:
-          typeof evParams?.errorMessage === "string" ? evParams.errorMessage : null,
+          typeof evParams?.errorMessage === "string"
+            ? evParams.errorMessage
+            : null,
         ...(RAW ? { raw: rawMsg ?? null } : {}),
       });
     }
@@ -955,8 +972,7 @@ const main = async () => {
     const evMethod = msg?.params?.method as string | undefined;
     const evParams = msg?.params?.params as any;
     const evTargetIdRaw = msg?.params?.targetId;
-    const evTargetId =
-      typeof evTargetIdRaw === "string" ? evTargetIdRaw : null;
+    const evTargetId = typeof evTargetIdRaw === "string" ? evTargetIdRaw : null;
 
     if (!evMethod) return;
     if (!ALL_TARGETS && evTargetId && evTargetId !== targetId) return;
