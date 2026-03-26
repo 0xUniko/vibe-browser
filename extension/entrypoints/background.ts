@@ -164,6 +164,15 @@ export default defineBackground(() => {
               const connection = yield* Connection;
               const current = yield* state.get;
 
+              if (current.isActive) {
+                const isConnected = yield* connection.checkConnection;
+                return {
+                  isActive: current.isActive,
+                  isConnected,
+                  port: current.port,
+                } satisfies StateResponse;
+              }
+
               yield* state.set({
                 isActive: current.isActive,
                 port: message.port,

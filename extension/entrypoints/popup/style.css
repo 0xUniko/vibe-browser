@@ -50,6 +50,12 @@ h1 {
   color: #222;
 }
 
+.field-input:disabled {
+  color: #6b7280;
+  background: #f3f4f6;
+  cursor: not-allowed;
+}
+
 .field-input:focus {
   outline: none;
   border-color: #4caf50;

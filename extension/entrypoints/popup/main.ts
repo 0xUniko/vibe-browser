@@ -17,7 +17,10 @@ let latestState: StateResponse | null = null;
 function updateUI(state: StateResponse): void {
   latestState = state;
   toggle.checked = state.isActive;
-  portInput.value = String(state.port);
+  portInput.disabled = state.isActive;
+  if (document.activeElement !== portInput) {
+    portInput.value = String(state.port);
+  }
   statusText.textContent = state.isActive ? "Active" : "Inactive";
 
   if (state.isActive) {
@@ -69,6 +72,11 @@ toggle.addEventListener("change", () => {
 });
 
 function submitPort(): void {
+  if (latestState?.isActive) {
+    portInput.value = String(latestState.port);
+    return;
+  }
+
   const port = portInput.valueAsNumber;
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     portInput.reportValidity();
