@@ -168,7 +168,7 @@ const parsePositiveInt = (rawValue: string | undefined, fallback: number) => {
 };
 
 const HOST = process.env.SKILL_HOST ?? "127.0.0.1";
-const PORT = parsePositiveInt(process.env.SKILL_PORT, 9222);
+const PORT = parsePositiveInt(process.env.SKILL_PORT, 9111);
 const REQUEST_TIMEOUT_MS = parsePositiveInt(
   process.env.SKILL_REQUEST_TIMEOUT_MS,
   15000,
