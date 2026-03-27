@@ -1,6 +1,6 @@
 # vibe-browser
 
-## **chrome从146版本开始支持直接开启mcp连接，所以这个项目已经完成了它的历史使命。以后考虑将chrome-devtools-mcp包装成skill直接使用即可**
+## **chrome从146版本开始支持直接开启mcp连接，所以这个项目已经完成了它的历史使命**
 
 [English](./README-en.md)
 

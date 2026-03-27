@@ -1,6 +1,6 @@
 # vibe-browser
 
-## **Starting from Chrome version 146, direct MCP connections are supported natively. Therefore, this project has fulfilled its historical mission. In the future, you may consider packaging chrome-devtools-mcp as a skill for direct use.**
+## **Starting from Chrome version 146, direct MCP connections are supported natively. Therefore, this project has fulfilled its historical mission.**
 
 [中文](./README.md)
 
