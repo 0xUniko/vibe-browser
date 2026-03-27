@@ -12,7 +12,40 @@ const connectionStatus = document.getElementById(
   "connection-status",
 ) as HTMLParagraphElement;
 
+const defaultState: StateResponse = {
+  isActive: false,
+  isConnected: false,
+  port: 9111,
+};
+
 let latestState: StateResponse | null = null;
+
+const getMessageFailureState = (): StateResponse => {
+  const runtimeError = chrome.runtime.lastError;
+  if (!runtimeError) {
+    return latestState ?? defaultState;
+  }
+
+  return {
+    ...(latestState ?? defaultState),
+    error: runtimeError.message ?? "Background message failed",
+    errorInfo: {
+      code: "RUNTIME_MESSAGE_FAILED",
+      message: runtimeError.message ?? "Background message failed",
+    },
+  };
+};
+
+const handleStateResponse = (response?: StateResponse): void => {
+  if (chrome.runtime.lastError) {
+    updateUI(getMessageFailureState());
+    return;
+  }
+
+  if (response) {
+    updateUI(response);
+  }
+};
 
 function updateUI(state: StateResponse): void {
   latestState = state;
@@ -22,6 +55,15 @@ function updateUI(state: StateResponse): void {
     portInput.value = String(state.port);
   }
   statusText.textContent = state.isActive ? "Active" : "Inactive";
+
+  if (state.error) {
+    const errorCode = state.errorInfo?.code;
+    connectionStatus.textContent = errorCode
+      ? `${state.error} (${errorCode})`
+      : state.error;
+    connectionStatus.className = "connection-status error";
+    return;
+  }
 
   if (state.isActive) {
     connectionStatus.textContent = state.isConnected
@@ -39,11 +81,7 @@ function updateUI(state: StateResponse): void {
 function refreshState(): void {
   chrome.runtime.sendMessage<GetStateMessage, StateResponse>(
     { type: "getState" },
-    (response) => {
-      if (response) {
-        updateUI(response);
-      }
-    },
+    handleStateResponse,
   );
 }
 
@@ -63,11 +101,7 @@ toggle.addEventListener("change", () => {
   const isActive = toggle.checked;
   chrome.runtime.sendMessage<SetStateMessage, StateResponse>(
     { type: "setState", isActive },
-    (response) => {
-      if (response) {
-        updateUI(response);
-      }
-    },
+    handleStateResponse,
   );
 });
 
@@ -88,11 +122,7 @@ function submitPort(): void {
 
   chrome.runtime.sendMessage<SetPortMessage, StateResponse>(
     { type: "setPort", port },
-    (response) => {
-      if (response) {
-        updateUI(response);
-      }
-    },
+    handleStateResponse,
   );
 }
 

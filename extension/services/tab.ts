@@ -4,10 +4,11 @@
 
 import { Context, Effect, Layer, Ref } from "effect";
 import { Connection } from "./ConnectionManager";
-import type { ExtensionCommandMessage } from "./RelayProtocol";
-
-const errorToMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
+import {
+  createExtensionErrorInfo,
+  errorToMessage,
+  type ExtensionCommandMessage,
+} from "./RelayProtocol";
 
 export interface ActiveTarget {
   tabId: number;
@@ -73,22 +74,47 @@ export const TabRegistryLive = Layer.effect(
         const debuggee = { tabId };
         yield* Effect.tryPromise({
           try: () => chrome.debugger.attach(debuggee, "1.3"),
-          catch: (e) =>
-            new Error(
-              `Failed to attach debugger to tab ${tabId}: ${errorToMessage(e)}`,
+          catch: (error) =>
+            createExtensionErrorInfo(
+              "DEBUGGER_ATTACH_FAILED",
+              `Failed to attach debugger to tab ${tabId}`,
+              {
+                details: { tabId },
+                cause: error,
+              },
             ),
         });
 
         const result = (yield* Effect.tryPromise({
           try: () =>
             chrome.debugger.sendCommand(debuggee, "Target.getTargetInfo"),
-          catch: (e) =>
-            new Error(
-              `Failed to get TargetInfo for tab ${tabId}: ${errorToMessage(e)}`,
+          catch: (error) =>
+            createExtensionErrorInfo(
+              "TARGET_INFO_LOOKUP_FAILED",
+              `Failed to get TargetInfo for tab ${tabId}`,
+              {
+                details: { tabId },
+                cause: error,
+              },
             ),
         })) as { targetInfo: TargetInfo };
 
         const targetInfo = result.targetInfo;
+        if (
+          typeof targetInfo?.targetId !== "string" ||
+          targetInfo.targetId.length === 0
+        ) {
+          yield* Effect.fail(
+            createExtensionErrorInfo(
+              "INVALID_TARGET_INFO",
+              `Target.getTargetInfo returned no targetId for tab ${tabId}`,
+              {
+                details: { tabId },
+              },
+            ),
+          );
+        }
+
         yield* setTargetId(tabId, targetInfo.targetId);
 
         yield* connection.send({
@@ -122,12 +148,13 @@ export const TabRegistryLive = Layer.effect(
         });
 
         const activeTab = activeTabs[0];
-        const activeTabId = activeTab?.id;
-        if (typeof activeTabId !== "number") {
-          throw new Error("No active tab found");
+        if (activeTab && typeof activeTab.id === "number") {
+          return { tabId: activeTab.id };
         }
 
-        return { tabId: activeTabId };
+        return yield* Effect.fail(
+          createExtensionErrorInfo("NO_ACTIVE_TAB", "No active tab found"),
+        );
       },
     );
 
@@ -183,10 +210,6 @@ export const TabRegistryLive = Layer.effect(
             tabId,
             targetId: targetInfo.targetId,
           })),
-          Effect.catchAll(() =>
-            // attach failed -> fail fast, do not open hidden tab
-            Effect.fail(new Error("Attach failed on current tab")),
-          ),
         );
       });
 
@@ -277,14 +300,28 @@ export const TabRegistryLive = Layer.effect(
           case "createTab":
           case "tab.createTab": {
             const url = msg.params.params?.url;
-            if (typeof url !== "string" || !url.trim()) {
-              throw new Error("tab.createTab requires a non-empty 'url' param");
+            if (typeof url === "string" && url.length > 0) {
+              return yield* createTab(url);
             }
-            return yield* createTab(url);
+
+            yield* Effect.fail(
+              createExtensionErrorInfo(
+                "INVALID_CREATE_TAB_URL",
+                "tab.createTab requires a non-empty 'url' param",
+              ),
+            );
           }
 
           default: {
-            throw new Error(`Unknown tab method: ${msg.params.method}`);
+            yield* Effect.fail(
+              createExtensionErrorInfo(
+                "UNKNOWN_TAB_METHOD",
+                `Unknown tab method: ${msg.params.method}`,
+                {
+                  details: { method: msg.params.method },
+                },
+              ),
+            );
           }
         }
       });

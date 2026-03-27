@@ -1,10 +1,12 @@
 type JsonPrimitive = string | number | boolean | null;
 type Json = JsonPrimitive | Json[] | { [key: string]: Json };
 
-import type { ServerWebSocket } from "bun";
-
 declare const process: {
   env: Record<string, string | undefined>;
+};
+
+declare const Bun: {
+  serve<T>(options: BunServeOptions): void;
 };
 
 type ExtensionMethod = "cdp" | "tab";
@@ -20,10 +22,18 @@ export interface ExtensionCommandMessage {
   };
 }
 
+export interface ExtensionErrorInfo {
+  code: string;
+  message: string;
+  details?: { [key: string]: Json };
+  cause?: string;
+}
+
 export interface ExtensionResponseMessage {
   id: number;
   result?: unknown;
   error?: string;
+  errorInfo?: ExtensionErrorInfo;
 }
 
 export interface ExtensionEventMessage {
@@ -60,11 +70,105 @@ type ClientEnvelope =
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null;
 
-const safeJsonParse = (text: string): unknown => {
+const isExtensionErrorInfo = (v: unknown): v is ExtensionErrorInfo => {
+  if (!isRecord(v)) return false;
+  if (typeof v.code !== "string") return false;
+  if (typeof v.message !== "string") return false;
+  if (v.details !== undefined && !isRecord(v.details)) return false;
+  if (v.cause !== undefined && typeof v.cause !== "string") return false;
+  return true;
+};
+
+const errorToMessage = (error: unknown): string => {
+  if (isExtensionErrorInfo(error)) return error.message;
+  if (error instanceof Error) return error.message;
+  return String(error);
+};
+
+const makeErrorInfo = (
+  code: string,
+  message: string,
+  options?: {
+    details?: { [key: string]: Json };
+    cause?: unknown;
+  },
+): ExtensionErrorInfo => {
+  const cause =
+    options?.cause === undefined ? undefined : errorToMessage(options.cause);
+
+  return {
+    code,
+    message,
+    ...(options?.details ? { details: options.details } : {}),
+    ...(cause ? { cause } : {}),
+  };
+};
+
+const formatErrorInfo = (errorInfo: ExtensionErrorInfo): string => {
+  const parts = [`${errorInfo.code}: ${errorInfo.message}`];
+
+  if (errorInfo.details && Object.keys(errorInfo.details).length > 0) {
+    parts.push(`details=${JSON.stringify(errorInfo.details)}`);
+  }
+
+  if (errorInfo.cause) {
+    parts.push(`cause=${errorInfo.cause}`);
+  }
+
+  return parts.join(" | ");
+};
+
+const getResponseErrorInfo = (
+  message: Pick<ExtensionResponseMessage, "error" | "errorInfo">,
+): ExtensionErrorInfo | undefined => {
+  if (message.errorInfo) return message.errorInfo;
+  if (typeof message.error !== "string") return undefined;
+  return makeErrorInfo("UNSTRUCTURED_EXTENSION_ERROR", message.error);
+};
+
+const makeErrorResponse = (
+  id: number,
+  errorInfo: ExtensionErrorInfo,
+): ExtensionResponseMessage => ({
+  id,
+  error: errorInfo.message,
+  errorInfo,
+});
+
+const errorInfoToJson = (
+  errorInfo: ExtensionErrorInfo,
+): { [key: string]: Json } => ({
+  code: errorInfo.code,
+  message: errorInfo.message,
+  ...(errorInfo.details ? { details: errorInfo.details } : {}),
+  ...(errorInfo.cause ? { cause: errorInfo.cause } : {}),
+});
+
+type JsonParseResult =
+  | { ok: true; value: unknown }
+  | { ok: false; errorInfo: ExtensionErrorInfo };
+
+const parseJsonText = (
+  text: string,
+  context: {
+    code: string;
+    message: string;
+    details?: { [key: string]: Json };
+  },
+): JsonParseResult => {
   try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return undefined;
+    return { ok: true, value: JSON.parse(text) as unknown };
+  } catch (error) {
+    return {
+      ok: false,
+      errorInfo: makeErrorInfo(context.code, context.message, {
+        details: {
+          ...(context.details ?? {}),
+          textLength: text.length,
+        },
+        cause: error,
+      }),
+    };
   }
 };
 
@@ -104,6 +208,9 @@ const isExtensionResponseMessage = (
   if (!isRecord(v)) return false;
   if (typeof v.id !== "number") return false;
   if (v.error !== undefined && typeof v.error !== "string") return false;
+  if (v.errorInfo !== undefined && !isExtensionErrorInfo(v.errorInfo)) {
+    return false;
+  }
   return true;
 };
 
@@ -145,7 +252,13 @@ const isClientEnvelope = (v: unknown): v is ClientEnvelope => {
 
 type WsRole = "extension" | "client";
 type WsData = { role: WsRole };
-type SkillWs = ServerWebSocket<WsData>;
+type SkillWs = {
+  data: WsData;
+  readyState: number;
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+  ping?: (data?: string | Uint8Array) => void;
+};
 type BunServer = {
   upgrade(req: Request, options: { data: WsData }): boolean;
 };
@@ -202,12 +315,28 @@ const state = {
   sseClients: new Set<ReadableStreamDefaultController<Uint8Array>>(),
 };
 
-const wsSendJson = (ws: SkillWs, message: unknown): void => {
-  if (ws.readyState !== WebSocket.OPEN) return;
+const wsSendJson = (
+  ws: SkillWs,
+  message: unknown,
+): ExtensionErrorInfo | undefined => {
+  if (ws.readyState !== WebSocket.OPEN) {
+    return makeErrorInfo(
+      "EXTENSION_NOT_CONNECTED",
+      "Extension is not connected",
+    );
+  }
+
   try {
     ws.send(JSON.stringify(message));
-  } catch {
-    // ignore
+    return undefined;
+  } catch (error) {
+    return makeErrorInfo(
+      "WS_SEND_FAILED",
+      "Failed to send command to extension",
+      {
+        cause: error,
+      },
+    );
   }
 };
 
@@ -216,11 +345,11 @@ const textEncoder = new TextEncoder();
 const sseBroadcast = (message: unknown): void => {
   const payload = `data: ${JSON.stringify(message)}\n\n`;
   const bytes = textEncoder.encode(payload);
-  for (const controller of state.sseClients) {
+  for (const controller of Array.from(state.sseClients)) {
     try {
       controller.enqueue(bytes);
     } catch {
-      // ignore
+      state.sseClients.delete(controller);
     }
   }
 };
@@ -235,14 +364,11 @@ const respondPending = (pendingId: number, msg: ExtensionResponseMessage) => {
   pending.resolve(msg);
 };
 
-const failAllPending = (error: string): void => {
+const failAllPending = (errorInfo: ExtensionErrorInfo): void => {
   for (const [pendingId, pending] of state.pending.entries()) {
     clearTimeout(pending.timeoutId);
     state.pending.delete(pendingId);
-    pending.resolve({
-      id: pendingId,
-      error,
-    });
+    pending.resolve(makeErrorResponse(pendingId, errorInfo));
   }
 };
 
@@ -262,11 +388,48 @@ const makeTimeoutError = (
 const isTimeoutError = (error: string | undefined): boolean =>
   typeof error === "string" && error.startsWith(TIMEOUT_ERROR_PREFIX);
 
-const commandErrorToStatus = (error: string | undefined): number => {
-  if (!error) return 200;
-  if (error === "Extension is not connected") return 503;
-  if (isTimeoutError(error)) return 504;
-  return 502;
+const makeTimeoutErrorInfo = (
+  timeoutMs: number,
+  includeBlockedHint: boolean,
+): ExtensionErrorInfo =>
+  makeErrorInfo(
+    "COMMAND_TIMEOUT",
+    makeTimeoutError(timeoutMs, includeBlockedHint),
+    {
+      details: { timeoutMs },
+    },
+  );
+
+const commandErrorToStatus = (
+  message: Pick<ExtensionResponseMessage, "error" | "errorInfo">,
+): number => {
+  const errorInfo = getResponseErrorInfo(message);
+  if (!errorInfo) return 200;
+
+  switch (errorInfo.code) {
+    case "INVALID_JSON":
+    case "INVALID_COMMAND_BODY":
+    case "INVALID_COMMAND_METHOD":
+    case "INVALID_COMMAND_PARAMS":
+    case "INVALID_COMMAND_TARGET_ID":
+    case "MISSING_TARGET_ID":
+    case "INVALID_PORT":
+    case "INVALID_CREATE_TAB_URL":
+    case "UNKNOWN_TAB_METHOD":
+      return 400;
+    case "NO_ACTIVE_TAB":
+      return 404;
+    case "PORT_CHANGE_WHILE_ACTIVE":
+      return 409;
+    case "EXTENSION_NOT_CONNECTED":
+    case "RELAY_NOT_CONNECTED":
+      return 503;
+    case "COMMAND_TIMEOUT":
+    case "RELAY_CONNECT_TIMEOUT":
+      return 504;
+    default:
+      return 502;
+  }
 };
 
 const sendCommandToExtension = (
@@ -277,18 +440,26 @@ const sendCommandToExtension = (
   new Promise((resolve) => {
     const ext = state.extension;
     if (!ext || ext.readyState !== WebSocket.OPEN) {
-      resolve({
-        id: command.id,
-        error: "Extension is not connected",
-      });
+      resolve(
+        makeErrorResponse(
+          command.id,
+          makeErrorInfo(
+            "EXTENSION_NOT_CONNECTED",
+            "Extension is not connected",
+          ),
+        ),
+      );
       return;
     }
 
     const timeoutId = setTimeout(() => {
-      respondPending(command.id, {
-        id: command.id,
-        error: makeTimeoutError(timeoutMs, options?.includeBlockedHint === true),
-      });
+      respondPending(
+        command.id,
+        makeErrorResponse(
+          command.id,
+          makeTimeoutErrorInfo(timeoutMs, options?.includeBlockedHint === true),
+        ),
+      );
     }, timeoutMs);
 
     state.pending.set(command.id, {
@@ -296,7 +467,10 @@ const sendCommandToExtension = (
       timeoutId,
     });
 
-    wsSendJson(ext, command);
+    const sendError = wsSendJson(ext, command);
+    if (sendError) {
+      respondPending(command.id, makeErrorResponse(command.id, sendError));
+    }
   });
 
 type HealthProbe =
@@ -323,18 +497,20 @@ const runActiveTargetHealthProbe = async (): Promise<HealthProbe> => {
     { includeBlockedHint: false },
   );
 
-  if (response.error) {
-    const blocked = isTimeoutError(response.error);
+  const errorInfo = getResponseErrorInfo(response);
+  if (errorInfo) {
+    const blocked = errorInfo.code === "COMMAND_TIMEOUT";
+    const message = formatErrorInfo(errorInfo);
     return {
       ok: false,
       browserResponsive: false,
       browserBlocked: blocked,
-      message: blocked ? `${response.error}. ${BLOCKED_EXTENSION_HINT}` : response.error,
+      message: blocked ? `${message}. ${BLOCKED_EXTENSION_HINT}` : message,
     };
   }
 
   const targetId = isRecord(response.result) ? response.result.targetId : null;
-  if (typeof targetId !== "string" || targetId.trim().length === 0) {
+  if (typeof targetId !== "string" || targetId.length === 0) {
     return {
       ok: false,
       browserResponsive: false,
@@ -399,45 +575,120 @@ const startExtensionKeepalive = (ws: SkillWs): void => {
   }, EXTENSION_KEEPALIVE_MS);
 };
 
-const parseHttpCommandBody = (
-  body: unknown,
-): ExtensionCommandMessage | null => {
-  if (!isRecord(body)) return null;
+type ParsedHttpCommand =
+  | { ok: true; command: ExtensionCommandMessage }
+  | { ok: false; errorInfo: ExtensionErrorInfo };
+
+const parseHttpCommandBody = (body: unknown): ParsedHttpCommand => {
+  if (!isRecord(body)) {
+    return {
+      ok: false,
+      errorInfo: makeErrorInfo(
+        "INVALID_COMMAND_BODY",
+        "Command body must be a JSON object",
+      ),
+    };
+  }
 
   if (isExtensionCommandMessage(body)) {
-    return makeCommand({
-      method: body.method,
-      params: body.params,
-    });
+    return {
+      ok: true,
+      command: makeCommand({
+        method: body.method,
+        params: body.params,
+      }),
+    };
   }
 
   if (isClientEnvelope(body)) {
-    if (body.type !== "command") return null;
-    return makeCommand({
-      method: body.method,
-      params: body.params,
-    });
+    if (body.type !== "command") {
+      return {
+        ok: false,
+        errorInfo: makeErrorInfo(
+          "INVALID_COMMAND_BODY",
+          "Ping envelopes cannot be sent to /command",
+        ),
+      };
+    }
+
+    return {
+      ok: true,
+      command: makeCommand({
+        method: body.method,
+        params: body.params,
+      }),
+    };
   }
 
   const method = body.method;
   const params = body.params;
   // NOTE: any incoming id from HTTP is ignored; server generates id for correlation.
 
-  if (!isExtensionMethod(method)) return null;
-  if (!isRecord(params)) return null;
-  if (typeof params.method !== "string") return null;
+  if (!isExtensionMethod(method)) {
+    return {
+      ok: false,
+      errorInfo: makeErrorInfo(
+        "INVALID_COMMAND_METHOD",
+        "Command method must be 'cdp' or 'tab'",
+      ),
+    };
+  }
 
-  return makeCommand({
-    method,
-    params: {
-      method: params.method,
-      params: isRecord(params.params)
-        ? (params.params as Record<string, unknown>)
-        : undefined,
-      targetId:
-        typeof params.targetId === "string" ? params.targetId : undefined,
-    },
-  });
+  if (!isRecord(params)) {
+    return {
+      ok: false,
+      errorInfo: makeErrorInfo(
+        "INVALID_COMMAND_PARAMS",
+        "Command params must be an object",
+      ),
+    };
+  }
+
+  if (typeof params.method !== "string") {
+    return {
+      ok: false,
+      errorInfo: makeErrorInfo(
+        "INVALID_COMMAND_PARAMS",
+        "Command params.method must be a string",
+      ),
+    };
+  }
+
+  if (params.params !== undefined && !isRecord(params.params)) {
+    return {
+      ok: false,
+      errorInfo: makeErrorInfo(
+        "INVALID_COMMAND_PARAMS",
+        "Command params.params must be an object when provided",
+      ),
+    };
+  }
+
+  if (params.targetId !== undefined && typeof params.targetId !== "string") {
+    return {
+      ok: false,
+      errorInfo: makeErrorInfo(
+        "INVALID_COMMAND_TARGET_ID",
+        "Command params.targetId must be a string when provided",
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    command: makeCommand({
+      method,
+      params: {
+        method: params.method,
+        params:
+          params.params !== undefined
+            ? (params.params as Record<string, unknown>)
+            : undefined,
+        targetId:
+          typeof params.targetId === "string" ? params.targetId : undefined,
+      },
+    }),
+  };
 };
 
 const serverOptions: BunServeOptions = {
@@ -507,25 +758,51 @@ const serverOptions: BunServeOptions = {
 
     const handleHttpCommand = async (): Promise<Response> => {
       const bodyText = await req.text();
-      const body = safeJsonParse(bodyText);
-      const command = parseHttpCommandBody(body);
-      if (!command) {
+      const body = parseJsonText(bodyText, {
+        code: "INVALID_JSON",
+        message: "Request body is not valid JSON",
+        details: { endpoint: "/command" },
+      });
+      if (!body.ok) {
         return json(
-          { ok: false, error: "Unrecognized command shape" },
+          {
+            ok: false,
+            result: null,
+            error: body.errorInfo.message,
+            errorInfo: errorInfoToJson(body.errorInfo),
+          },
           { status: 400 },
         );
       }
 
-      const msg = await sendCommandToExtension(command, REQUEST_TIMEOUT_MS, {
-        includeBlockedHint: true,
-      });
-      const status = commandErrorToStatus(msg.error);
+      const command = parseHttpCommandBody(body.value);
+      if (!command.ok) {
+        return json(
+          {
+            ok: false,
+            result: null,
+            error: command.errorInfo.message,
+            errorInfo: errorInfoToJson(command.errorInfo),
+          },
+          { status: 400 },
+        );
+      }
+
+      const msg = await sendCommandToExtension(
+        command.command,
+        REQUEST_TIMEOUT_MS,
+        {
+          includeBlockedHint: true,
+        },
+      );
+      const status = commandErrorToStatus(msg);
 
       return json(
         {
           ok: msg.error ? false : true,
           result: (msg.result ?? null) as Json,
           error: msg.error ?? null,
+          errorInfo: msg.errorInfo ? errorInfoToJson(msg.errorInfo) : null,
         },
         { status },
       );
@@ -623,7 +900,12 @@ const serverOptions: BunServeOptions = {
       const role = ws.data.role;
       if (role === "extension") {
         if (state.extension && state.extension.readyState === WebSocket.OPEN) {
-          failAllPending("Extension reconnected; previous in-flight commands were canceled.");
+          failAllPending(
+            makeErrorInfo(
+              "EXTENSION_RECONNECTED",
+              "Extension reconnected; previous in-flight commands were canceled.",
+            ),
+          );
           log("warn", "Replacing existing extension connection");
           try {
             state.extension.close(1012, "Replaced");
@@ -641,8 +923,23 @@ const serverOptions: BunServeOptions = {
     message(ws, data) {
       const text =
         typeof data === "string" ? data : new TextDecoder().decode(data);
-      const parsed = safeJsonParse(text);
+      const parsedResult = parseJsonText(text, {
+        code: "INVALID_EXTENSION_MESSAGE",
+        message: "Received invalid JSON from extension websocket",
+      });
       const role = ws.data.role;
+
+      if (!parsedResult.ok) {
+        sseBroadcast({
+          type: "extension-message-parse-error",
+          error: parsedResult.errorInfo.message,
+          errorInfo: parsedResult.errorInfo,
+          raw: text,
+        });
+        return;
+      }
+
+      const parsed = parsedResult.value;
 
       if (role === "extension") {
         // Extension -> server: responses/events/logs
@@ -654,6 +951,7 @@ const serverOptions: BunServeOptions = {
               type: "orphan-response",
               result: (parsed.result ?? null) as Json,
               error: parsed.error ?? null,
+              errorInfo: parsed.errorInfo ?? null,
             });
           return;
         }
@@ -682,7 +980,18 @@ const serverOptions: BunServeOptions = {
 
         state.extension = null;
         stopExtensionKeepalive();
-        failAllPending("Extension disconnected before command completed.");
+        failAllPending(
+          makeErrorInfo(
+            "EXTENSION_DISCONNECTED",
+            "Extension disconnected before command completed.",
+            {
+              details: {
+                code,
+                reason,
+              },
+            },
+          ),
+        );
         log("warn", "Extension disconnected", { code, reason });
         sseBroadcast({ type: "status", extensionConnected: false });
         return;

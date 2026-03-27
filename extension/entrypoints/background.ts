@@ -12,6 +12,11 @@ import type {
   ExtensionResponseMessage,
 } from "../services/RelayProtocol";
 import {
+  createExtensionErrorInfo,
+  toExtensionErrorInfo,
+  toExtensionErrorResponse,
+} from "../services/RelayProtocol";
+import {
   DEFAULT_PORT,
   StateStore,
   StateStoreLive,
@@ -50,6 +55,59 @@ export default defineBackground(() => {
     isActive: false,
     isConnected: false,
     port: DEFAULT_PORT,
+  };
+
+  const readStateResponse: Effect.Effect<StateResponse, unknown, AppEnv> =
+    Effect.gen(function* () {
+      const state = yield* StateStore;
+      const connection = yield* Connection;
+      const current = yield* state.get;
+      const isConnected = yield* connection.checkConnection;
+
+      return {
+        isActive: current.isActive,
+        isConnected,
+        port: current.port,
+      } satisfies StateResponse;
+    });
+
+  const stateResponseWithError = (
+    error: unknown,
+    baseState?: StateResponse,
+  ): StateResponse => {
+    const errorInfo = toExtensionErrorInfo(error, {
+      code: "BACKGROUND_MESSAGE_FAILED",
+    });
+
+    return {
+      ...(baseState ?? fallbackStateResponse),
+      error: errorInfo.message,
+      errorInfo,
+    };
+  };
+
+  const sendStateErrorResponse = async (
+    error: unknown,
+    sendResponse: (response: StateResponse) => void,
+  ): Promise<void> => {
+    try {
+      const currentState = await runtime.runPromise(readStateResponse);
+      sendResponse(stateResponseWithError(error, currentState));
+    } catch {
+      sendResponse(stateResponseWithError(error));
+    }
+  };
+
+  const runStateRequest = (
+    effect: Effect.Effect<StateResponse, unknown, AppEnv>,
+    sendResponse: (response: StateResponse) => void,
+  ): void => {
+    runtime
+      .runPromise(effect)
+      .then(sendResponse)
+      .catch((error) => {
+        void sendStateErrorResponse(error, sendResponse);
+      });
   };
 
   const updateBadge = (isActive: boolean) =>
@@ -116,84 +174,64 @@ export default defineBackground(() => {
       sendResponse: (response: StateResponse) => void,
     ) => {
       if (message.type === "getState") {
-        runtime
-          .runPromise(
-            Effect.gen(function* () {
-              const state = yield* StateStore;
-              const connection = yield* Connection;
-              const current = yield* state.get;
-              const isConnected = yield* connection.checkConnection;
-              return {
-                isActive: current.isActive,
-                isConnected,
-                port: current.port,
-              } satisfies StateResponse;
-            }),
-          )
-          .then(sendResponse)
-          .catch(() => sendResponse(fallbackStateResponse));
+        runStateRequest(readStateResponse, sendResponse);
         return true; // Async response
       }
 
       if (message.type === "setState") {
-        runtime
-          .runPromise(
-            Effect.gen(function* () {
-              yield* handleStateChange(message.isActive);
-              const state = yield* StateStore;
-              const connection = yield* Connection;
-              const current = yield* state.get;
-              const isConnected = yield* connection.checkConnection;
-              return {
-                isActive: current.isActive,
-                isConnected,
-                port: current.port,
-              } satisfies StateResponse;
-            }),
-          )
-          .then(sendResponse)
-          .catch(() => sendResponse(fallbackStateResponse));
+        runStateRequest(
+          Effect.gen(function* () {
+            yield* handleStateChange(message.isActive);
+            return yield* readStateResponse;
+          }),
+          sendResponse,
+        );
         return true; // Async response
       }
 
       if (message.type === "setPort") {
-        runtime
-          .runPromise(
-            Effect.gen(function* () {
-              const state = yield* StateStore;
-              const connection = yield* Connection;
-              const current = yield* state.get;
+        runStateRequest(
+          Effect.gen(function* () {
+            const state = yield* StateStore;
+            const current = yield* state.get;
 
-              if (current.isActive) {
-                const isConnected = yield* connection.checkConnection;
-                return {
-                  isActive: current.isActive,
-                  isConnected,
-                  port: current.port,
-                } satisfies StateResponse;
-              }
+            if (
+              !Number.isInteger(message.port) ||
+              message.port < 1 ||
+              message.port > 65535
+            ) {
+              yield* Effect.fail(
+                createExtensionErrorInfo(
+                  "INVALID_PORT",
+                  "Port must be an integer between 1 and 65535",
+                  {
+                    details: { port: message.port },
+                  },
+                ),
+              );
+            }
 
-              yield* state.set({
-                isActive: current.isActive,
-                port: message.port,
-              });
+            if (current.isActive) {
+              yield* Effect.fail(
+                createExtensionErrorInfo(
+                  "PORT_CHANGE_WHILE_ACTIVE",
+                  "Cannot change the relay port while the extension is active",
+                  {
+                    details: { currentPort: current.port },
+                  },
+                ),
+              );
+            }
 
-              if (current.isActive) {
-                yield* connection.disconnect;
-                yield* connection.startMaintaining;
-              }
+            yield* state.set({
+              isActive: current.isActive,
+              port: message.port,
+            });
 
-              const next = yield* state.get;
-              const isConnected = yield* connection.checkConnection;
-              return {
-                isActive: next.isActive,
-                isConnected,
-                port: next.port,
-              } satisfies StateResponse;
-            }),
-          )
-          .then(sendResponse)
-          .catch(() => sendResponse(fallbackStateResponse));
+            return yield* readStateResponse;
+          }),
+          sendResponse,
+        );
         return true; // Async response
       }
 
@@ -252,8 +290,7 @@ export default defineBackground(() => {
             ),
             Effect.catchAll((error) =>
               Effect.succeed<ExtensionResponseMessage>({
-                id: message.id,
-                error: errorToMessage(error),
+                ...toExtensionErrorResponse(message.id, error),
               }),
             ),
           );

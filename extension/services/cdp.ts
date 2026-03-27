@@ -4,7 +4,10 @@
 
 import { Context, Effect, Layer } from "effect";
 import { Connection } from "./ConnectionManager";
-import type { ExtensionCommandMessage } from "./RelayProtocol";
+import {
+  createExtensionErrorInfo,
+  type ExtensionCommandMessage,
+} from "./RelayProtocol";
 import { TabRegistry } from "./tab";
 
 export interface CDP {
@@ -34,9 +37,17 @@ export const CDPLive = Layer.effect(
 
         // Target.getTargets - Chrome provides a dedicated API for this
         if (method === "Target.getTargets") {
-          const targets = yield* Effect.tryPromise(() =>
-            chrome.debugger.getTargets(),
-          );
+          const targets = yield* Effect.tryPromise({
+            try: () => chrome.debugger.getTargets(),
+            catch: (error) =>
+              createExtensionErrorInfo(
+                "CDP_GET_TARGETS_FAILED",
+                "Failed to query Chrome debugger targets",
+                {
+                  cause: error,
+                },
+              ),
+          });
           return {
             targetInfos: targets.map((t) => ({
               targetId: t.id,
@@ -50,14 +61,32 @@ export const CDPLive = Layer.effect(
 
         const targetId = msg.params.targetId;
         if (!targetId) {
-          throw new Error(`No targetId provided for method ${method}`);
+          return yield* Effect.fail(
+            createExtensionErrorInfo(
+              "MISSING_TARGET_ID",
+              `CDP method ${method} requires a targetId`,
+              {
+                details: { method },
+              },
+            ),
+          );
         }
 
         const debuggee: chrome.debugger.DebuggerSession = { targetId };
 
-        return yield* Effect.tryPromise(() =>
-          chrome.debugger.sendCommand(debuggee, method, msg.params.params),
-        );
+        return yield* Effect.tryPromise({
+          try: () =>
+            chrome.debugger.sendCommand(debuggee, method, msg.params.params),
+          catch: (error) =>
+            createExtensionErrorInfo(
+              "CDP_COMMAND_FAILED",
+              `CDP command ${method} failed for target ${targetId}`,
+              {
+                details: { method, targetId },
+                cause: error,
+              },
+            ),
+        });
       });
 
     const handleDebuggerEvent: CDP["handleDebuggerEvent"] = (

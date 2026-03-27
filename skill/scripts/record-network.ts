@@ -38,6 +38,15 @@ declare const process: any;
 
 const RELAY_URL = process.env.RELAY_URL ?? "http://localhost:9111";
 
+type JsonObject = Record<string, unknown>;
+
+type RelayErrorInfo = {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+  cause?: string;
+};
+
 const getPositionalArgs = (): string[] => {
   const args = Array.isArray(process.argv) ? process.argv.slice(2) : [];
   return args.filter((a: string) => a && !String(a).startsWith("-"));
@@ -45,10 +54,11 @@ const getPositionalArgs = (): string[] => {
 
 const getTargetIdFromArgs = (): string | null => {
   const positional = getPositionalArgs();
-  const fromArg = String(positional[0] ?? "").trim();
-  if (fromArg) return fromArg;
-  const fromEnv = String(process.env.TARGET_ID ?? "").trim();
-  return fromEnv || null;
+  const fromArg = positional[0];
+  if (typeof fromArg === "string" && fromArg.length > 0) return fromArg;
+  const fromEnv = process.env.TARGET_ID;
+  if (typeof fromEnv === "string" && fromEnv.length > 0) return fromEnv;
+  return null;
 };
 
 // Prefer CLI args over env vars so a lingering $env:OUT_FILE does not
@@ -99,8 +109,31 @@ type HealthResponse = {
 
 type RelayCommandMethod = "tab" | "cdp";
 type RelayOk = { ok: true; result: any; error: null };
-type RelayErr = { ok: false; result: null; error: string | null };
+type RelayErr = {
+  ok: false;
+  result: null;
+  error: string | null;
+  errorInfo?: RelayErrorInfo | null;
+};
 type RelayResp = RelayOk | RelayErr;
+
+const formatRelayError = (
+  response: Pick<RelayErr, "error" | "errorInfo">,
+): string => {
+  const errorInfo = response.errorInfo;
+  if (errorInfo) {
+    const parts = [`${errorInfo.code}: ${errorInfo.message}`];
+    if (errorInfo.details && Object.keys(errorInfo.details).length > 0) {
+      parts.push(`details=${JSON.stringify(errorInfo.details)}`);
+    }
+    if (errorInfo.cause) {
+      parts.push(`cause=${errorInfo.cause}`);
+    }
+    return parts.join(" | ");
+  }
+
+  return response.error ?? "Unknown relay error";
+};
 
 const assertRelayHealthy = async (): Promise<void> => {
   let response: Response;
@@ -134,8 +167,11 @@ const call = async (
     body: JSON.stringify({ method, params }),
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
-  return JSON.parse(text) as RelayResp;
+  const payload = JSON.parse(text) as RelayResp;
+  if (!res.ok) {
+    throw new Error(formatRelayError(payload as RelayErr));
+  }
+  return payload;
 };
 
 const nowIso = () => new Date().toISOString();
@@ -494,7 +530,15 @@ const main = async () => {
       method: "Network.getResponseBody",
       targetId: forTargetId,
       params: { requestId },
-    }).catch(() => null);
+    }).catch(
+      (error: unknown) =>
+        ({
+          ok: false,
+          result: null,
+          error: error instanceof Error ? error.message : String(error),
+          errorInfo: null,
+        }) as RelayErr,
+    );
 
     if (!resp) {
       return {
@@ -507,7 +551,7 @@ const main = async () => {
       return {
         body: null as string | null,
         base64Encoded: false,
-        error: resp.error || "Network.getResponseBody failed",
+        error: formatRelayError(resp),
       };
     }
     const body = resp?.result?.body;

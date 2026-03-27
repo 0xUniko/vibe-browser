@@ -128,3 +128,7 @@ input:checked+.slider::before {
 .connection-status.connecting {
   color: #ff9800;
 }
+
+.connection-status.error {
+  color: #d14343;
+}

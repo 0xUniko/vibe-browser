@@ -12,12 +12,20 @@ declare const process: {
 
 type JsonObject = Record<string, unknown>;
 
+type RelayErrorInfo = {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+  cause?: string;
+};
+
 type RelayCommandMethod = "tab" | "cdp";
 
 type RelayResponse = {
   ok: boolean;
   result: unknown;
   error: string | null;
+  errorInfo?: RelayErrorInfo | null;
 };
 
 type HealthResponse = {
@@ -45,6 +53,24 @@ const isRecord = (value: unknown): value is JsonObject =>
 
 const parseJsonResponse = async <T>(response: Response): Promise<T> => {
   return (await response.json()) as T;
+};
+
+const formatRelayError = (
+  response: Pick<RelayResponse, "error" | "errorInfo">,
+): string => {
+  const errorInfo = response.errorInfo;
+  if (errorInfo) {
+    const parts = [`${errorInfo.code}: ${errorInfo.message}`];
+    if (errorInfo.details && Object.keys(errorInfo.details).length > 0) {
+      parts.push(`details=${JSON.stringify(errorInfo.details)}`);
+    }
+    if (errorInfo.cause) {
+      parts.push(`cause=${errorInfo.cause}`);
+    }
+    return parts.join(" | ");
+  }
+
+  return response.error ?? "Unknown relay error";
 };
 
 const assertRelayHealthy = async (): Promise<void> => {
@@ -81,7 +107,7 @@ const call = async (
 
   const payload = await parseJsonResponse<RelayResponse>(response);
   if (!response.ok) {
-    throw new Error(payload.error ?? `HTTP ${response.status}`);
+    throw new Error(formatRelayError(payload));
   }
   return payload;
 };
@@ -117,13 +143,9 @@ const main = async (): Promise<void> => {
   const targetResult = isRecord(active.result) ? active.result : null;
   const targetId = targetResult?.targetId;
 
-  if (typeof targetId !== "string" || !targetId.trim()) {
-    console.error("Failed to get active tab targetId");
-    if (process.env.RAW === "1") {
-      console.error("raw:", JSON.stringify(active, null, 2));
-    }
-    process.exitCode = 1;
-    return;
+  if (typeof targetId !== "string" || targetId.length === 0) {
+    const raw = JSON.stringify(active, null, 2);
+    throw new Error(`tab.getActiveTarget returned no targetId. raw=${raw}`);
   }
 
   const urlRes = await evalInPage(targetId, "location.href");

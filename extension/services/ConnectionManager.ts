@@ -13,8 +13,11 @@ import {
   Stream,
 } from "effect";
 import {
+  createExtensionErrorInfo,
+  errorToMessage,
   isExtensionCommandMessage,
   type ExtensionCommandMessage,
+  type ExtensionErrorInfo,
 } from "./RelayProtocol";
 import { StateStore } from "./StateManager";
 
@@ -28,7 +31,7 @@ export type ConnectionEvent =
   | { _tag: "Disconnected"; reason?: string };
 
 export interface Connection {
-  send: (message: unknown) => Effect.Effect<void>;
+  send: (message: unknown) => Effect.Effect<void, ExtensionErrorInfo>;
   startMaintaining: Effect.Effect<void>;
   disconnect: Effect.Effect<void>;
   isConnected: Effect.Effect<boolean>;
@@ -56,19 +59,39 @@ export const ConnectionLive = Layer.effect(
       Effect.map((ws) => ws?.readyState === WebSocket.OPEN),
     );
 
-    const rawSend = (ws: WebSocket, message: unknown): void => {
+    const rawSend = (
+      ws: WebSocket,
+      message: unknown,
+    ): ReturnType<typeof createExtensionErrorInfo> | undefined => {
       try {
         ws.send(JSON.stringify(message));
+        return undefined;
       } catch {
-        // ignore
+        return createExtensionErrorInfo(
+          "WS_SEND_FAILED",
+          "Failed to send message to relay",
+          {
+            details: { readyState: ws.readyState },
+          },
+        );
       }
     };
 
     const send: Connection["send"] = (message) =>
       Effect.gen(function* () {
         const ws = yield* Ref.get(wsRef);
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          rawSend(ws, message);
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          return yield* Effect.fail(
+            createExtensionErrorInfo(
+              "RELAY_NOT_CONNECTED",
+              "Relay connection is not open",
+            ),
+          );
+        }
+
+        const sendError = rawSend(ws, message);
+        if (sendError) {
+          return yield* Effect.fail(sendError);
         }
       });
 
@@ -91,37 +114,69 @@ export const ConnectionLive = Layer.effect(
       const currentState = yield* state.get;
       const relayUrl = getRelayUrl(currentState.port);
 
-      const socket = yield* Effect.async<WebSocket, Error>((resume) => {
-        const ws = new WebSocket(relayUrl);
+      const socket = yield* Effect.async<WebSocket, ExtensionErrorInfo>(
+        (resume) => {
+          const ws = new WebSocket(relayUrl);
 
-        const timeoutId = setTimeout(() => {
-          try {
-            ws.close();
-          } catch {
-            // ignore
-          }
-          resume(Effect.fail(new Error("Connection timeout")));
-        }, 5000);
+          const timeoutId = setTimeout(() => {
+            try {
+              ws.close();
+            } catch {
+              // ignore
+            }
+            resume(
+              Effect.fail(
+                createExtensionErrorInfo(
+                  "RELAY_CONNECT_TIMEOUT",
+                  `Timed out connecting to relay at ${relayUrl}`,
+                  {
+                    details: { relayUrl, timeoutMs: 5000 },
+                  },
+                ),
+              ),
+            );
+          }, 5000);
 
-        ws.onopen = () => {
-          clearTimeout(timeoutId);
-          resume(Effect.succeed(ws));
-        };
+          ws.onopen = () => {
+            clearTimeout(timeoutId);
+            resume(Effect.succeed(ws));
+          };
 
-        ws.onerror = () => {
-          clearTimeout(timeoutId);
-          resume(Effect.fail(new Error("WebSocket connection failed")));
-        };
+          ws.onerror = () => {
+            clearTimeout(timeoutId);
+            resume(
+              Effect.fail(
+                createExtensionErrorInfo(
+                  "RELAY_CONNECT_FAILED",
+                  `WebSocket connection failed for ${relayUrl}`,
+                  {
+                    details: { relayUrl },
+                  },
+                ),
+              ),
+            );
+          };
 
-        ws.onclose = (event) => {
-          clearTimeout(timeoutId);
-          resume(
-            Effect.fail(
-              new Error(`WebSocket closed: ${event.reason || event.code}`),
-            ),
-          );
-        };
-      });
+          ws.onclose = (event) => {
+            clearTimeout(timeoutId);
+            resume(
+              Effect.fail(
+                createExtensionErrorInfo(
+                  "RELAY_CONNECT_CLOSED",
+                  `WebSocket closed while connecting to ${relayUrl}`,
+                  {
+                    details: {
+                      relayUrl,
+                      closeCode: event.code,
+                      closeReason: event.reason || "",
+                    },
+                  },
+                ),
+              ),
+            );
+          };
+        },
+      );
 
       // Install handlers after open
       socket.onmessage = (event: MessageEvent) => {
@@ -130,8 +185,16 @@ export const ConnectionLive = Layer.effect(
           if (isExtensionCommandMessage(parsed)) {
             void Effect.runPromise(Queue.offer(messagesQ, parsed));
           }
-        } catch {
-          rawSend(socket, { error: { code: -32700, message: "Parse error" } });
+        } catch (error) {
+          rawSend(socket, {
+            method: "log",
+            params: {
+              level: "error",
+              args: [
+                `Received invalid JSON from relay: ${errorToMessage(error)}`,
+              ],
+            },
+          });
         }
       };
 
@@ -166,7 +229,14 @@ export const ConnectionLive = Layer.effect(
       while (true) {
         const maintaining = yield* Ref.get(maintainRef);
         if (!maintaining) return;
-        yield* tryConnectOnce.pipe(Effect.catchAll(() => Effect.void));
+        yield* tryConnectOnce.pipe(
+          Effect.catchAll((error) =>
+            Queue.offer(eventsQ, {
+              _tag: "Disconnected",
+              reason: errorToMessage(error),
+            }),
+          ),
+        );
         yield* Effect.sleep(Duration.millis(RECONNECT_INTERVAL_MS));
       }
     });

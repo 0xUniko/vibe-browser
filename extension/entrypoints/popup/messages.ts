@@ -2,6 +2,8 @@
  * Popup <-> Background messaging types.
  */
 
+import type { ExtensionErrorInfo } from "../../services/RelayProtocol";
+
 export interface GetStateMessage {
   type: "getState";
 }
@@ -20,6 +22,8 @@ export interface StateResponse {
   isActive: boolean;
   isConnected: boolean;
   port: number;
+  error?: string;
+  errorInfo?: ExtensionErrorInfo;
 }
 
 export type PopupMessage = GetStateMessage | SetStateMessage | SetPortMessage;
