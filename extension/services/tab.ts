@@ -38,7 +38,7 @@ export interface TabRegistry {
   countOpenTabs: Effect.Effect<number, unknown>;
   getActiveTabId: Effect.Effect<{ tabId: number }, unknown>;
   getActiveTargetId: Effect.Effect<ActiveTarget, unknown>;
-  createTab: (url: string) => Effect.Effect<{ tabId: number }, unknown>;
+  createTab: (url: string) => Effect.Effect<ActiveTarget, unknown>;
 
   handleCommand: (
     msg: ExtensionCommandMessage,
@@ -253,17 +253,17 @@ export const TabRegistryLive = Layer.effect(
         yield* deleteTab(tabId);
       });
 
-    const createTab = (url: string) =>
+    const createTab: TabRegistry["createTab"] = (url) =>
       Effect.gen(function* () {
         const tab = yield* Effect.tryPromise({
-          try: () => chrome.tabs.create({ url }),
+          try: () => chrome.tabs.create({ url, active: false }),
           catch: (e) => new Error(`Failed to create tab: ${errorToMessage(e)}`),
         });
         const tabId = tab.id;
         if (typeof tabId !== "number") {
           throw new Error("Created tab has no id");
         }
-        return { tabId };
+        return yield* ensureAttached(tabId);
       });
 
     const detachAll = Effect.gen(function* () {

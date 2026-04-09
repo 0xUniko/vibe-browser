@@ -93,6 +93,11 @@ Connected to relay
 - Send command: `POST /command`
 - Event stream (SSE): `GET /events`
 
+Common patterns:
+
+- `tab.getActiveTarget`: get `{ tabId, targetId }` for the current active tab
+- `tab.createTab`: create a normal background tab without switching the user's active tab, then return `{ tabId, targetId }` for that new tab
+
 Environment variables:
 
 ```

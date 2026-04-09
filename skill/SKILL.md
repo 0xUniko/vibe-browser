@@ -43,6 +43,8 @@ Send commands to `POST /command` with this shape:
 
 Use `tab.getActiveTarget` before most `cdp` calls. `Target.getTargets` is the main exception and does not require `targetId`.
 
+For background work, `tab.createTab` can create a normal background tab without switching the user's active tab. It returns `{ tabId, targetId }`, so you can continue with `cdp` commands immediately.
+
 ## Use bundled scripts
 
 - Active tab lookup: `bun .agents/skills/vibe-browser/scripts/get-active-target.ts`

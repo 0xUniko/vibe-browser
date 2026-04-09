@@ -93,6 +93,11 @@ Connected to relay
 - 发送命令：`POST /command`
 - 事件流（SSE）：`GET /events`
 
+常用模式：
+
+- `tab.getActiveTarget`：获取当前活动标签页的 `{ tabId, targetId }`
+- `tab.createTab`：后台创建普通标签页，不切换当前活动标签，并返回新标签的 `{ tabId, targetId }`
+
 环境变量：
 
 ```
